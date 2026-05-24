@@ -30,6 +30,51 @@ type WorkspacePayload = {
   providers: { serper: { configured: boolean }; tavily: { configured: boolean } };
 };
 
+function extractApiErrorMessage(payload: string) {
+  const flattened = payload
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return flattened && !flattened.startsWith("DOCTYPE")
+    ? flattened.slice(0, 240)
+    : "Le serveur a renvoye une reponse invalide.";
+}
+
+async function readApiResponse<T>(res: Response) {
+  const raw = await res.text();
+  const contentType = res.headers.get("content-type") ?? "";
+  const expectsJson = contentType.includes("application/json");
+
+  let data: T | null = null;
+  if (raw) {
+    if (!expectsJson) {
+      throw new Error(extractApiErrorMessage(raw));
+    }
+
+    try {
+      data = JSON.parse(raw) as T;
+    } catch {
+      throw new Error("Le serveur a renvoye un JSON invalide.");
+    }
+  }
+
+  if (!res.ok) {
+    const message =
+      typeof data === "object" &&
+      data !== null &&
+      "error" in data &&
+      typeof (data as { error?: unknown }).error === "string"
+        ? (data as { error: string }).error
+        : `Erreur ${res.status}`;
+    throw new Error(message);
+  }
+
+  return data as T;
+}
+
 export default function UserSourcingPage() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -49,8 +94,10 @@ export default function UserSourcingPage() {
           fetch(`${apiBaseUrl}/api/sourcing/modules/sourcing-commercial/workspace`, { cache: "no-store", credentials: "include" }),
           fetch(`${apiBaseUrl}/api/sourcing/agents`, { cache: "no-store", credentials: "include" })
         ]);
-        const wsData = (await wsRes.json()) as WorkspacePayload;
-        const agData = (await agRes.json()) as { agents: SaasAgentProfile[] };
+        const [wsData, agData] = await Promise.all([
+          readApiResponse<WorkspacePayload>(wsRes),
+          readApiResponse<{ agents: SaasAgentProfile[] }>(agRes)
+        ]);
         if (!active) return;
 
         const sourcingAgents = agData.agents
@@ -119,7 +166,7 @@ export default function UserSourcingPage() {
           targetCount: Number(form.targetCount)
         })
       });
-      const data = (await res.json()) as { ok?: boolean; error?: string; run?: SaasSourcingRun };
+      const data = await readApiResponse<{ ok?: boolean; error?: string; run?: SaasSourcingRun }>(res);
       if (!res.ok || !data.ok || !data.run) throw new Error(data.error ?? "Erreur lors du lancement.");
       setSuccess(data.run);
       setPayload((prev) =>

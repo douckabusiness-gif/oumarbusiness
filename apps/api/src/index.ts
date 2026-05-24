@@ -1,6 +1,6 @@
 import "dotenv/config";
 import cors, { type CorsOptions } from "cors";
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import helmet from "helmet";
 import { createServer } from "node:http";
 import path from "node:path";
@@ -62,6 +62,40 @@ app.use("/uploads", express.static(path.resolve(uploadsDir), { maxAge: "7d" }));
 
 app.set("io", io);
 registerRoutes(app);
+app.use((_req, res) => {
+  res.status(404).json({ error: "Route API introuvable." });
+});
+app.use((error: unknown, _req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) {
+    next(error);
+    return;
+  }
+
+  const errorWithMeta = error as {
+    message?: string;
+    status?: number;
+    statusCode?: number;
+    stack?: string;
+    type?: string;
+  };
+  const status =
+    typeof errorWithMeta.status === "number"
+      ? errorWithMeta.status
+      : typeof errorWithMeta.statusCode === "number"
+        ? errorWithMeta.statusCode
+        : errorWithMeta.type === "entity.parse.failed"
+          ? 400
+          : 500;
+  const message =
+    errorWithMeta.type === "entity.parse.failed"
+      ? "Corps de requete JSON invalide."
+      : status >= 500
+        ? "Une erreur serveur est survenue."
+        : errorWithMeta.message?.trim() || "Requete invalide.";
+
+  logger.error({ err: errorWithMeta, status }, "API request failed");
+  res.status(status).json({ error: message });
+});
 
 io.on("connection", (socket) => {
   logger.info({ socketId: socket.id }, "dashboard socket connected");
