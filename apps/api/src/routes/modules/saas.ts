@@ -1635,13 +1635,117 @@ function extractProspectName(title: string, url: string) {
   }
 }
 
+const sourcingExcludedHostPattern =
+  /(^|\.)((jobs?|careers?|emploi|recrutement|vacancy|internship|stage|talent|work)(\.|$)|indeed\.|linkedin\.com|glassdoor\.|monster\.|careerjet\.|optioncarriere\.|welcometothejungle\.|jobnetafrica\.|michaelpage\.|businessfrance\.|jobs2\.)/i;
+const sourcingExcludedPathPattern =
+  /jobs?|job-|careers?|emploi|offres?-d-emploi|recrut|vacan|hiring|internship|stage|postuler|apply/i;
+const sourcingExcludedTextPattern =
+  /jobs?|career|careers|emploi|offre d'emploi|recrut|vacan|hiring|internship|stage|postuler|apply now|candidature/i;
+const sourcingBusinessPathPattern =
+  /contact|about|apropos|a-propos|services|solutions|company|entreprise|societe|products|produits|catalogue/i;
+const sourcingBusinessTextPattern =
+  /contact|services|solutions|a propos|about us|our services|nos services|entreprise|societe|company|clients|produits|catalogue|devis|whatsapp|email|telephone|phone|adresse|bureau/i;
+const sourcingDecisionMakerPattern =
+  /fondateur|founder|directeur|ceo|gerant|manager|responsable|sales|commercial|contact/i;
+
+function normalizeSearchText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function buildSourcingSearchQuery(brief: string, sector: string, zone: string) {
+  const query = [brief, sector, zone].filter(Boolean).join(" ").trim();
+  const exclusions = "-job -jobs -career -careers -emploi -emplois -recrutement -vacancy -internship -stage";
+  return `${query} ${exclusions}`.trim();
+}
+
+function isRejectedSourcingCandidate({
+  title,
+  url,
+  snippet,
+  summary
+}: {
+  title: string;
+  url: string;
+  snippet: string;
+  summary: string;
+}) {
+  const text = normalizeSearchText(`${title} ${snippet} ${summary}`);
+
+  try {
+    const parsed = new URL(url);
+    const hostname = normalizeSearchText(parsed.hostname.replace(/^www\./, ""));
+    const pathname = normalizeSearchText(parsed.pathname);
+
+    if (sourcingExcludedHostPattern.test(hostname)) return true;
+    if (sourcingExcludedPathPattern.test(pathname)) return true;
+  } catch {
+    return true;
+  }
+
+  return sourcingExcludedTextPattern.test(text);
+}
+
+function hasStrongBusinessSignals({
+  title,
+  url,
+  snippet,
+  summary
+}: {
+  title: string;
+  url: string;
+  snippet: string;
+  summary: string;
+}) {
+  const text = normalizeSearchText(`${title} ${snippet} ${summary}`);
+  const businessTextSignal = sourcingBusinessTextPattern.test(text);
+  const decisionMakerSignal = sourcingDecisionMakerPattern.test(text);
+
+  try {
+    const parsed = new URL(url);
+    const path = normalizeSearchText(parsed.pathname);
+    const host = normalizeSearchText(parsed.hostname.replace(/^www\./, ""));
+    return businessTextSignal || decisionMakerSignal || sourcingBusinessPathPattern.test(path) || /\./.test(host);
+  } catch {
+    return businessTextSignal || decisionMakerSignal;
+  }
+}
+
+function dedupeSourcingProspects(prospects: NonNullable<SaasSourcingRun["prospects"][number]>[]) {
+  const seen = new Set<string>();
+  return prospects.filter((prospect) => {
+    const key = normalizeSearchText(prospect.website || prospect.company || prospect.name);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function buildProspectScore(text: string, summary: string, website: string) {
-  let score = 45;
-  if (summary) score += 15;
+  const normalizedText = normalizeSearchText(text);
+  const normalizedSummary = normalizeSearchText(summary);
+
+  let score = 35;
+  if (summary) score += 10;
   if (website) score += 10;
-  if (/contact|services|about|apropos|solutions|entreprise/i.test(text)) score += 10;
-  if (/whatsapp|digital|web|crm|automation|marketing|site/i.test(text)) score += 10;
-  return Math.min(score, 95);
+  if (sourcingBusinessTextPattern.test(normalizedText)) score += 18;
+  if (sourcingDecisionMakerPattern.test(normalizedText)) score += 10;
+  if (/whatsapp|digital|web|crm|automation|marketing|site|service|solution/i.test(normalizedText)) score += 8;
+  if (/contact|email|telephone|phone|adresse/i.test(normalizedSummary)) score += 10;
+  if (sourcingExcludedTextPattern.test(normalizedText)) score -= 45;
+
+  try {
+    const parsed = new URL(website);
+    const path = normalizeSearchText(parsed.pathname);
+    if (sourcingBusinessPathPattern.test(path)) score += 8;
+    if (sourcingExcludedPathPattern.test(path) || sourcingExcludedHostPattern.test(parsed.hostname)) score -= 45;
+  } catch {
+    score -= 10;
+  }
+
+  return Math.max(0, Math.min(score, 95));
 }
 
 function buildMissionKeywordBoost(text: string, mission: SaasAgentProfile["missionConfig"]) {
@@ -1671,6 +1775,7 @@ function buildSourcingObjective(brief: string, sector: string, zone: string) {
 
 async function executeSourcingSearch({
   objective,
+  searchQuery,
   brief,
   agentSource,
   zone,
@@ -1679,6 +1784,7 @@ async function executeSourcingSearch({
   providerStatus
 }: {
   objective: string;
+  searchQuery: string;
   brief: string;
   agentSource: "serper" | "tavily";
   zone: string;
@@ -1689,14 +1795,14 @@ async function executeSourcingSearch({
   if (agentSource === "serper") {
     if (!providerStatus.serper.configured) {
       throw new Error("Serper n'est pas configure dans les parametres IA.");
-    }
+      }
 
-    const search = await searchSerper({
-      query: objective,
-      limit: targetCount,
-      country: zone,
-      language: "fr"
-    });
+      const search = await searchSerper({
+        query: searchQuery,
+        limit: targetCount,
+        country: zone,
+        language: "fr"
+      });
 
     return {
       providerMode: search.results.length ? ("live" as const) : ("waiting_api" as const),
@@ -1712,11 +1818,11 @@ async function executeSourcingSearch({
     throw new Error("Tavily n'est pas configure dans les parametres IA.");
   }
 
-  const search = await searchTavily({
-    query: [brief, sector, zone].filter(Boolean).join(" "),
-    limit: targetCount,
-    language: "fr"
-  });
+    const search = await searchTavily({
+      query: searchQuery,
+      limit: targetCount,
+      language: "fr"
+    });
 
   return {
     providerMode: search.results.length ? ("live" as const) : ("waiting_api" as const),
@@ -3805,12 +3911,14 @@ saasRouter.post("/modules/sourcing-commercial/runs", async (req, res, next) => {
         : "",
       sourcingAgent?.systemPrompt ? `Cadre agent: ${sourcingAgent.systemPrompt}.` : "",
       sourcingAgent?.identity ? `Identite agent: ${sourcingAgent.identity}.` : ""
-    ]
-      .filter(Boolean)
-      .join(" ");
+      ]
+        .filter(Boolean)
+        .join(" ");
     const objective = `${buildSourcingObjective(brief, sector, zone)}${missionNotes ? ` ${missionNotes}` : ""}`.trim();
+    const searchQuery = buildSourcingSearchQuery(brief, sector, zone);
     const research = await executeSourcingSearch({
       objective,
+      searchQuery,
       brief,
       agentSource: sourcingAgent.missionConfig.source,
       zone,
@@ -3821,9 +3929,19 @@ saasRouter.post("/modules/sourcing-commercial/runs", async (req, res, next) => {
 
     const prospects = await Promise.all(
       research.results.map(async (result) => {
-        const summary =
-          sourcingAgent.missionConfig.source === "tavily" ? ((await extractPageContent(result.url)) ?? result.snippet) : "";
+        if (isRejectedSourcingCandidate({ title: result.title, url: result.url, snippet: result.snippet, summary: "" })) {
+          return null;
+        }
+
+        const summary = (await extractPageContent(result.url)) ?? result.snippet;
         const combinedText = `${result.title} ${result.snippet} ${summary}`;
+        if (isRejectedSourcingCandidate({ title: result.title, url: result.url, snippet: result.snippet, summary })) {
+          return null;
+        }
+        if (!hasStrongBusinessSignals({ title: result.title, url: result.url, snippet: result.snippet, summary })) {
+          return null;
+        }
+
         return {
           id: randomUUID(),
           name: extractProspectName(result.title, result.url),
@@ -3834,12 +3952,24 @@ saasRouter.post("/modules/sourcing-commercial/runs", async (req, res, next) => {
           source: result.source,
           score: Math.min(
             99,
-            buildProspectScore(combinedText, summary, result.url) +
-              (sourcingAgent ? buildMissionKeywordBoost(combinedText, sourcingAgent.missionConfig) : 0)
+              buildProspectScore(combinedText, summary, result.url) +
+                (sourcingAgent ? buildMissionKeywordBoost(combinedText, sourcingAgent.missionConfig) : 0)
           )
         };
       })
     );
+    const filteredProspects = dedupeSourcingProspects(
+      prospects.filter((item): item is NonNullable<typeof item> => Boolean(item))
+    )
+      .sort((a, b) => b.score - a.score)
+      .slice(0, targetCount);
+
+    if (!filteredProspects.length) {
+      return res.status(422).json({
+        error:
+          "Aucun prospect qualifie n'a ete retenu. Precise davantage le secteur, la zone ou la cible pour eviter les pages emploi et resultats trop generiques."
+      });
+    }
 
     const run: SaasSourcingRun = {
       id: randomUUID(),
@@ -3852,11 +3982,11 @@ saasRouter.post("/modules/sourcing-commercial/runs", async (req, res, next) => {
       sector,
       zone,
       targetCount,
-      foundCount: prospects.length,
+      foundCount: filteredProspects.length,
       status: "completed",
       providerMode: research.providerMode,
       providers: research.providers,
-      prospects,
+      prospects: filteredProspects,
       createdAt: new Date().toISOString()
     };
 

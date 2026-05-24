@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { SaasPortalShell } from "@/components/saas/SaasPortalShell";
 import type { SaasSourcingRun } from "@/components/saas/shared";
-import { formatDate } from "@/components/saas/shared";
+import { formatDate, normalizeProspectScore } from "@/components/saas/shared";
 import { getApiBaseUrl } from "@/lib/api";
 
 const apiBaseUrl = getApiBaseUrl();
@@ -228,8 +228,9 @@ function RunCard({ run, expanded, onToggle }: { run: SaasSourcingRun; expanded: 
 }
 
 function ScorePill({ score }: { score: number }) {
-  const color = score >= 8 ? "text-emerald-300 bg-emerald-500/15" : score >= 5 ? "text-gold bg-gold/15" : "text-zinc-400 bg-zinc-500/10";
-  return <span className={`shrink-0 rounded-lg px-2 py-0.5 text-xs font-bold ${color}`}>{score}/10</span>;
+  const displayScore = normalizeProspectScore(score);
+  const color = displayScore >= 8 ? "text-emerald-300 bg-emerald-500/15" : displayScore >= 5 ? "text-gold bg-gold/15" : "text-zinc-400 bg-zinc-500/10";
+  return <span className={`shrink-0 rounded-lg px-2 py-0.5 text-xs font-bold ${color}`}>{displayScore}/10</span>;
 }
 
 function MiniStat({ label, value }: { label: string; value: string }) {

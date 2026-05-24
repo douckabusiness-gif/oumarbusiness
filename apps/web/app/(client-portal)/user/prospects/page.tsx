@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { SaasPortalShell } from "@/components/saas/SaasPortalShell";
 import type { SaasSourcingRun } from "@/components/saas/shared";
-import { formatDate } from "@/components/saas/shared";
+import { formatDate, normalizeProspectScore } from "@/components/saas/shared";
 import { getApiBaseUrl } from "@/lib/api";
 
 const apiBaseUrl = getApiBaseUrl();
@@ -57,7 +57,7 @@ export default function UserProspectsPage() {
       `"${p.company.replace(/"/g, '""')}"`,
       `"${p.name.replace(/"/g, '""')}"`,
       `"${p.website.replace(/"/g, '""')}"`,
-      p.score,
+      normalizeProspectScore(p.score),
       p.source,
       `"${p.sector.replace(/"/g, '""')}"`,
       `"${p.zone.replace(/"/g, '""')}"`,
@@ -148,7 +148,7 @@ export default function UserProspectsPage() {
     const tavilyCount = allProspects.filter((p) => p.source === "tavily").length;
     const inCrm = allProspects.filter((p) => !!p.pushedToCrmAt).length;
     const avgScore = total
-      ? Math.round(allProspects.reduce((s, p) => s + p.score, 0) / total)
+      ? Math.round(allProspects.reduce((s, p) => s + normalizeProspectScore(p.score), 0) / total)
       : 0;
     return { total, serperCount, tavilyCount, inCrm, avgScore };
   }, [allProspects]);
@@ -369,7 +369,8 @@ function ProspectCard({
   onPushCrm: () => void;
 }) {
   const isInCrm = !!prospect.pushedToCrmAt;
-  const scoreColor = prospect.score >= 8 ? "emerald" : prospect.score >= 5 ? "gold" : "zinc";
+  const displayScore = normalizeProspectScore(prospect.score);
+  const scoreColor = displayScore >= 8 ? "emerald" : displayScore >= 5 ? "gold" : "zinc";
   const initial = (prospect.company || prospect.name || "?")[0]?.toUpperCase() ?? "?";
   const description = prospect.summary || prospect.snippet || "";
 
@@ -398,7 +399,7 @@ function ProspectCard({
               )}
             </div>
             {/* Score badge */}
-            <ScoreBadge score={prospect.score} color={scoreColor} />
+            <ScoreBadge score={displayScore} color={scoreColor} />
           </div>
 
           {/* Source badge */}

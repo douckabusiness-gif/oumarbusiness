@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { SaasPortalShell } from "@/components/saas/SaasPortalShell";
-import type { SaasAgentProfile, SaasSourcingRun } from "@/components/saas/shared";
+import { normalizeProspectScore, type SaasAgentProfile, type SaasSourcingRun } from "@/components/saas/shared";
 import { getApiBaseUrl } from "@/lib/api";
 
 const apiBaseUrl = getApiBaseUrl();
@@ -358,16 +358,26 @@ export default function UserSourcingPage() {
               </Link>
             </div>
             {success.prospects.length > 0 && (
-              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {success.prospects.slice(0, 6).map((p) => (
-                  <div key={p.id} className="rounded-2xl border border-line bg-ink p-4">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="truncate font-semibold text-zinc-100">{p.company}</p>
-                      <span className={`shrink-0 rounded-lg px-1.5 py-0.5 text-xs font-bold ${p.score >= 8 ? "bg-emerald-500/15 text-emerald-300" : p.score >= 5 ? "bg-gold/15 text-gold" : "bg-zinc-500/10 text-zinc-400"}`}>{p.score}/10</span>
-                    </div>
-                    {p.name && p.name !== p.company && <p className="mt-0.5 text-xs text-zinc-500">{p.name}</p>}
-                    {(p.snippet || p.summary) && <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-400">{p.snippet || p.summary}</p>}
-                    {p.website && (
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {success.prospects.slice(0, 6).map((p) => (
+                    <div key={p.id} className="rounded-2xl border border-line bg-ink p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="truncate font-semibold text-zinc-100">{p.company}</p>
+                        <span
+                          className={`shrink-0 rounded-lg px-1.5 py-0.5 text-xs font-bold ${
+                            normalizeProspectScore(p.score) >= 8
+                              ? "bg-emerald-500/15 text-emerald-300"
+                              : normalizeProspectScore(p.score) >= 5
+                                ? "bg-gold/15 text-gold"
+                                : "bg-zinc-500/10 text-zinc-400"
+                          }`}
+                        >
+                          {normalizeProspectScore(p.score)}/10
+                        </span>
+                      </div>
+                      {p.name && p.name !== p.company && <p className="mt-0.5 text-xs text-zinc-500">{p.name}</p>}
+                      {(p.snippet || p.summary) && <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-400">{p.snippet || p.summary}</p>}
+                      {p.website && (
                       <a href={p.website.startsWith("http") ? p.website : `https://${p.website}`} target="_blank" rel="noreferrer"
                         className="mt-2 inline-flex items-center gap-1 text-xs text-gold hover:text-amber-400">
                         <ExternalLink className="h-3 w-3" />{p.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}

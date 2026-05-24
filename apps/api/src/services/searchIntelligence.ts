@@ -149,7 +149,7 @@ export async function searchSerper({
     },
     body: JSON.stringify({
       q: query,
-      gl: countryCode(country),
+      ...(countryCode(country) ? { gl: countryCode(country) } : {}),
       hl: language,
       num: limit
     })
@@ -331,10 +331,18 @@ function normalizeBaseUrl(value: string) {
 
 function countryCode(country: string) {
   const normalized = country.toLowerCase();
+  if (
+    normalized.includes("afrique") ||
+    normalized.includes("europe") ||
+    normalized.includes("monde") ||
+    normalized.includes("international")
+  ) {
+    return "";
+  }
   if (normalized.includes("cote") || normalized.includes("ivoire")) return "ci";
   if (normalized.includes("senegal")) return "sn";
   if (normalized.includes("mali")) return "ml";
   if (normalized.includes("burkina")) return "bf";
   if (normalized.includes("france")) return "fr";
-  return "ci";
+  return "";
 }

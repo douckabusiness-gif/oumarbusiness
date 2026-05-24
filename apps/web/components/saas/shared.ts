@@ -351,6 +351,12 @@ export function formatDate(value?: string | null) {
   });
 }
 
+export function normalizeProspectScore(score: number) {
+  if (!Number.isFinite(score)) return 0;
+  if (score <= 10) return Math.max(0, Math.min(10, Math.round(score)));
+  return Math.max(0, Math.min(10, Math.round(score / 10)));
+}
+
 export function subscriptionStatusLabel(status: SubscriptionStatus) {
   switch (status) {
     case "trial":
