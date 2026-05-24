@@ -1008,6 +1008,20 @@ type PaymentRequest = {
   updatedAt: string;
 };
 
+type PublicPaymentRequest = {
+  id: string;
+  planId: string;
+  planName: string;
+  amount: number;
+  method: "wave" | "orange_money";
+  senderPhone: string;
+  reference: string;
+  status: "pending" | "approved" | "rejected";
+  rejectionReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 async function loadPaymentMethods(): Promise<PaymentMethods> {
   const raw = await prisma.appSetting.findUnique({ where: { key: SAAS_PAYMENT_METHODS_KEY } });
   if (!raw?.value) return { waveNumber: "", waveHolder: "", orangeMoneyNumber: "", orangeMoneyHolder: "", instructions: "" };
@@ -1057,6 +1071,23 @@ function parsePaymentRequest(value: unknown): PaymentRequest | null {
 
 const loadPaymentRequests = () => loadStoredArray<PaymentRequest>(SAAS_PAYMENT_REQUESTS_KEY, parsePaymentRequest);
 const savePaymentRequests = (items: PaymentRequest[]) => saveStoredArray(SAAS_PAYMENT_REQUESTS_KEY, items);;
+
+function toPublicPaymentRequest(request: PaymentRequest): PublicPaymentRequest {
+  return {
+    id: request.id,
+    planId: request.planId,
+    planName: request.planName,
+    amount: request.amount,
+    method: request.method,
+    senderPhone: request.senderPhone,
+    reference: request.reference,
+    status: request.status,
+    rejectionReason: request.rejectionReason ?? null,
+    createdAt: request.createdAt,
+    updatedAt: request.updatedAt
+  };
+}
+
 function isResetToken(v: unknown): v is PasswordResetToken {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
@@ -2519,6 +2550,153 @@ saasRouter.get("/company", async (req, res, next) => {
 
     const runtime = await getCompanyRuntime(context.company);
     res.json({ company: toPublicCompany(runtime.company, runtime.subscriptions) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.get("/subscription", async (req, res, next) => {
+  try {
+    const context = await resolveAuthenticatedContext(req);
+    if (!context) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session utilisateur invalide." });
+    }
+
+    const [runtime, plans, paymentRequests] = await Promise.all([
+      getCompanyRuntime(context.company),
+      loadSourcingPlans(),
+      loadPaymentRequests()
+    ]);
+    const subscription = runtime.subscriptions.find((item) => item.moduleKey === "sourcing-commercial") ?? null;
+    const requests = paymentRequests
+      .filter((item) => item.companyId === context.company.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const currentPlan = subscription
+      ? plans.find((plan) => plan.name === subscription.planName && plan.monthlyPrice === subscription.monthlyPrice) ?? null
+      : null;
+
+    res.json({
+      subscription: subscription ? toPublicSubscription(subscription, runtime.invoices) : null,
+      currentPlan,
+      latestRequest: requests[0] ? toPublicPaymentRequest(requests[0]) : null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.get("/payment-methods", async (req, res, next) => {
+  try {
+    const context = await resolveAuthenticatedContext(req);
+    if (!context) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session utilisateur invalide." });
+    }
+    void context;
+
+    const methods = await loadPaymentMethods();
+    res.json({
+      ok: true,
+      methods: {
+        ...methods,
+        configured: Boolean(methods.waveNumber || methods.orangeMoneyNumber)
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.get("/payments/requests/me", async (req, res, next) => {
+  try {
+    const context = await resolveAuthenticatedContext(req);
+    if (!context) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session utilisateur invalide." });
+    }
+
+    const requests = (await loadPaymentRequests())
+      .filter((item) => item.companyId === context.company.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((item) => toPublicPaymentRequest(item));
+
+    res.json({ ok: true, requests });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.post("/payments/requests", async (req, res, next) => {
+  try {
+    const context = await resolveAuthenticatedContext(req);
+    if (!context) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session utilisateur invalide." });
+    }
+
+    const planId = typeof req.body?.planId === "string" ? req.body.planId.trim() : "";
+    const method = req.body?.method === "orange_money" ? "orange_money" : req.body?.method === "wave" ? "wave" : "";
+    const senderPhone = typeof req.body?.senderPhone === "string" ? req.body.senderPhone.trim() : "";
+    const reference = typeof req.body?.reference === "string" ? req.body.reference.trim() : "";
+
+    if (!planId) return res.status(400).json({ error: "Le plan est obligatoire." });
+    if (!method) return res.status(400).json({ error: "La methode de paiement est obligatoire." });
+    if (senderPhone.length < 6) {
+      return res.status(400).json({ error: "Le numero de l'expediteur est obligatoire." });
+    }
+
+    const [plans, methods, requests, runtime] = await Promise.all([
+      loadSourcingPlans(),
+      loadPaymentMethods(),
+      loadPaymentRequests(),
+      getCompanyRuntime(context.company)
+    ]);
+    const plan = plans.find((item) => item.id === planId && item.isActive);
+    if (!plan) return res.status(404).json({ error: "Plan sourcing introuvable." });
+
+    const methodConfigured = method === "wave" ? Boolean(methods.waveNumber) : Boolean(methods.orangeMoneyNumber);
+    if (!methodConfigured) {
+      return res.status(400).json({ error: "Cette methode de paiement n'est pas encore disponible." });
+    }
+
+    const currentSubscription = runtime.subscriptions.find((item) => item.moduleKey === "sourcing-commercial") ?? null;
+    if (
+      currentSubscription?.status === "active" &&
+      currentSubscription.planName === plan.name &&
+      currentSubscription.monthlyPrice === plan.monthlyPrice
+    ) {
+      return res.status(400).json({ error: "Ce plan est deja actif pour votre entreprise." });
+    }
+
+    const duplicatePending = requests.find(
+      (item) => item.companyId === context.company.id && item.planId === plan.id && item.status === "pending"
+    );
+    if (duplicatePending) {
+      return res.status(409).json({ error: "Une demande est deja en attente pour ce plan." });
+    }
+
+    const now = new Date().toISOString();
+    const paymentRequest: PaymentRequest = {
+      id: randomUUID(),
+      companyId: context.company.id,
+      userId: context.user.id,
+      userName: context.user.name,
+      userEmail: context.user.email,
+      companyName: context.company.name,
+      planId: plan.id,
+      planName: plan.name,
+      amount: plan.monthlyPrice,
+      method,
+      senderPhone,
+      reference,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now
+    };
+
+    await savePaymentRequests([paymentRequest, ...requests]);
+    res.status(201).json({ ok: true, request: toPublicPaymentRequest(paymentRequest) });
   } catch (error) {
     next(error);
   }
@@ -4288,10 +4466,14 @@ saasRouter.patch("/admin/payments/requests/:id/approve", async (req, res, next) 
       (s) => s.companyId === paymentReq.companyId && s.moduleKey === "sourcing-commercial"
     );
     if (subIdx !== -1) {
+      const nextBillingDate = addDays(now, 30);
       const updatedSub = {
         ...subscriptions[subIdx]!,
         planName: paymentReq.planName,
+        monthlyPrice: paymentReq.amount,
         status: "active" as const,
+        startDate: now,
+        nextBillingDate,
         lastPaymentDate: now,
         updatedAt: now
       };

@@ -257,6 +257,29 @@ export type SaasSettingsOverview = {
   };
 };
 
+export type UserPaymentMethods = {
+  waveNumber: string;
+  waveHolder: string;
+  orangeMoneyNumber: string;
+  orangeMoneyHolder: string;
+  instructions: string;
+  configured: boolean;
+};
+
+export type UserPaymentRequest = {
+  id: string;
+  planId: string;
+  planName: string;
+  amount: number;
+  method: "wave" | "orange_money";
+  senderPhone: string;
+  reference: string;
+  status: "pending" | "approved" | "rejected";
+  rejectionReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type SourcingPlan = {
   id: string;
   name: string;
@@ -305,6 +328,12 @@ export type SourcingSubscriber = {
   totalProspects: number;
   lastRunAt: string | null;
   createdAt: string;
+};
+
+export type UserSourcingSubscriptionView = {
+  subscription: SaasSubscription | null;
+  currentPlan: SourcingPlan | null;
+  latestRequest: UserPaymentRequest | null;
 };
 
 export function formatMoney(value: number, currency = "FCFA") {

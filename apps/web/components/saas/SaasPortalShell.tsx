@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { Bot, FolderClock, LayoutDashboard, Loader2, LogOut, Menu, Search, Target, UserRound, X } from "lucide-react";
+import { Bot, CreditCard, FolderClock, LayoutDashboard, Loader2, LogOut, Menu, Search, Target, UserRound, X } from "lucide-react";
 import { useEffect, useState, type ComponentType } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { getApiBaseUrl } from "@/lib/api";
@@ -33,6 +33,7 @@ const baseNav: NavItem[] = [
   { href: "/user/sourcing", label: "Nouveau sourcing", icon: Search },
   { href: "/user/prospects", label: "Mes prospects", icon: Target },
   { href: "/user/history", label: "Historique", icon: FolderClock },
+  { href: "/user/subscription", label: "Abonnement", icon: CreditCard },
   { href: "/user/profile", label: "Mon profil", icon: UserRound }
 ];
 

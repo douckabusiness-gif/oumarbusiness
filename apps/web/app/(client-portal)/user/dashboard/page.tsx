@@ -6,6 +6,7 @@ import {
   Bot,
   CheckCircle2,
   Clock,
+  CreditCard,
   Loader2,
   Play,
   Radar,
@@ -16,8 +17,8 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { SaasPortalShell } from "@/components/saas/SaasPortalShell";
-import type { SaasCompany, SaasSourcingRun, SaasUser } from "@/components/saas/shared";
-import { formatDate } from "@/components/saas/shared";
+import type { SaasCompany, SaasSourcingRun, SaasUser, UserSourcingSubscriptionView } from "@/components/saas/shared";
+import { formatDate, formatMoney, subscriptionStatusLabel } from "@/components/saas/shared";
 import { getApiBaseUrl } from "@/lib/api";
 
 const apiBaseUrl = getApiBaseUrl();
@@ -38,18 +39,25 @@ export default function UserDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState<{ user?: SaasUser; company?: SaasCompany } | null>(null);
   const [workspace, setWorkspace] = useState<WorkspacePayload | null>(null);
+  const [subscriptionView, setSubscriptionView] = useState<UserSourcingSubscriptionView | null>(null);
 
   useEffect(() => {
     let active = true;
     async function load() {
       try {
-        const [sessionRes, wsRes] = await Promise.all([
+        const [sessionRes, wsRes, subscriptionRes] = await Promise.all([
           fetch(`${apiBaseUrl}/api/sourcing/auth/me`, { cache: "no-store", credentials: "include" }),
-          fetch(`${apiBaseUrl}/api/sourcing/modules/sourcing-commercial/workspace`, { cache: "no-store", credentials: "include" })
+          fetch(`${apiBaseUrl}/api/sourcing/modules/sourcing-commercial/workspace`, { cache: "no-store", credentials: "include" }),
+          fetch(`${apiBaseUrl}/api/sourcing/subscription`, { cache: "no-store", credentials: "include" })
         ]);
         const sessionData = (await sessionRes.json()) as { user?: SaasUser; company?: SaasCompany };
         const wsData = (await wsRes.json()) as WorkspacePayload;
-        if (active) { setSession(sessionData); setWorkspace(wsData); }
+        const subscriptionData = (await subscriptionRes.json()) as UserSourcingSubscriptionView;
+        if (active) {
+          setSession(sessionData);
+          setWorkspace(wsData);
+          setSubscriptionView(subscriptionData);
+        }
       } catch { /* ignore */ } finally {
         if (active) setLoading(false);
       }
@@ -60,6 +68,19 @@ export default function UserDashboardPage() {
 
   const latestRuns = workspace?.runs.slice(0, 3) ?? [];
   const providersReady = Boolean(workspace?.providers.serper.configured || workspace?.providers.tavily.configured);
+  const currentSubscription = subscriptionView?.subscription ?? null;
+  const currentRequest = subscriptionView?.latestRequest ?? null;
+  const currentPlan = subscriptionView?.currentPlan ?? null;
+  const subscriptionStatus = currentSubscription?.status === "active"
+    ? "Actif"
+    : currentRequest?.status === "pending"
+      ? "Paiement en attente"
+      : currentRequest?.status === "rejected"
+        ? "Paiement refuse"
+        : currentSubscription
+          ? subscriptionStatusLabel(currentSubscription.status)
+          : "Aucun plan actif";
+  const subscriptionAmount = currentSubscription?.monthlyPrice ?? currentPlan?.monthlyPrice ?? currentRequest?.amount ?? 0;
 
   if (loading) {
     return (
@@ -92,12 +113,50 @@ export default function UserDashboardPage() {
             : "Les providers de recherche ne sont pas encore configures dans l'admin."}
         </div>
 
+        <div className="rounded-3xl border border-line bg-panel p-5">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-gold">Mon abonnement</p>
+              <h3 className="mt-1 text-xl font-bold text-zinc-100">
+                {currentSubscription?.planName ?? currentRequest?.planName ?? "Aucun plan actif"}
+              </h3>
+              <p className="mt-2 text-sm text-zinc-400">
+                {currentSubscription?.status === "active"
+                  ? "Ton acces sourcing est actif et utilise les plans geres depuis l'admin."
+                  : currentRequest?.status === "pending"
+                    ? "Une demande de paiement est en attente de validation par l'admin."
+                    : "Choisis un plan pour activer ou mettre a jour ton acces sourcing."}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="rounded-2xl border border-line bg-ink px-4 py-3 text-right">
+                <p className="text-xs uppercase tracking-wider text-zinc-500">Statut</p>
+                <p className="mt-1 text-sm font-semibold text-zinc-100">{subscriptionStatus}</p>
+              </div>
+              <div className="rounded-2xl border border-line bg-ink px-4 py-3 text-right">
+                <p className="text-xs uppercase tracking-wider text-zinc-500">Montant</p>
+                <p className="mt-1 text-sm font-semibold text-gold">
+                  {subscriptionAmount > 0 ? `${formatMoney(subscriptionAmount)} / mois` : "Gratuit"}
+                </p>
+              </div>
+              <Link
+                href="/user/subscription"
+                className="inline-flex h-11 items-center gap-2 rounded-2xl bg-gold px-5 text-sm font-bold text-black transition hover:bg-amber-400"
+              >
+                <CreditCard className="h-4 w-4" />
+                Gerer l'abonnement
+              </Link>
+            </div>
+          </div>
+        </div>
+
         {/* ── Accès rapides ── */}
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
           <QuickAction href="/user/sourcing" icon={Radar} label="Nouveau sourcing" color="gold" primary />
           <QuickAction href="/user/prospects" icon={Target} label="Mes prospects" color="violet" />
           <QuickAction href="/user/history" icon={Clock} label="Historique" color="sky" />
           <QuickAction href="/user/agents" icon={Bot} label="Mes agents" color="emerald" />
+          <QuickAction href="/user/subscription" icon={CreditCard} label="Abonnement" color="amber" />
         </div>
 
         {/* ── Derniers runs ── */}
@@ -157,7 +216,8 @@ function QuickAction({ href, icon: Icon, label, color, primary }: { href: string
     gold: "text-gold bg-gold/10 border-gold/20",
     violet: "text-violet-300 bg-violet-500/10 border-violet-500/20",
     sky: "text-sky-300 bg-sky-500/10 border-sky-500/20",
-    emerald: "text-emerald-300 bg-emerald-500/10 border-emerald-500/20"
+    emerald: "text-emerald-300 bg-emerald-500/10 border-emerald-500/20",
+    amber: "text-amber-200 bg-amber-500/10 border-amber-500/20"
   };
   return (
     <Link
