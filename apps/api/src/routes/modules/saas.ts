@@ -1636,17 +1636,35 @@ function extractProspectName(title: string, url: string) {
 }
 
 const sourcingExcludedHostPattern =
-  /(^|\.)((jobs?|careers?|emploi|recrutement|vacancy|internship|stage|talent|work)(\.|$)|indeed\.|linkedin\.com|glassdoor\.|monster\.|careerjet\.|optioncarriere\.|welcometothejungle\.|jobnetafrica\.|michaelpage\.|businessfrance\.|jobs2\.)/i;
+  /(^|\.)((jobs?|careers?|emploi|recrutement|vacancy|internship|stage|talent|work)(\.|$)|indeed\.|linkedin\.com|glassdoor\.|monster\.|careerjet\.|optioncarriere\.|welcometothejungle\.|jobnetafrica\.|michaelpage\.|businessfrance\.|jobs2\.|europages\.|kompass\.|franchise\.|business\.google\.com|google\.com)/i;
 const sourcingExcludedPathPattern =
-  /jobs?|job-|careers?|emploi|offres?-d-emploi|recrut|vacan|hiring|internship|stage|postuler|apply/i;
+  /jobs?|job-|careers?|emploi|offres?-d-emploi|recrut|vacan|hiring|internship|stage|postuler|apply|annuaire|directory|marketplace|market-place|profil-d-entreprise|google-business-profile/i;
 const sourcingExcludedTextPattern =
-  /jobs?|career|careers|emploi|offre d'emploi|recrut|vacan|hiring|internship|stage|postuler|apply now|candidature/i;
+  /jobs?|career|careers|emploi|offre d'emploi|recrut|vacan|hiring|internship|stage|postuler|apply now|candidature|annuaire|directory|marketplace|place de marche|franchise/i;
 const sourcingBusinessPathPattern =
   /contact|about|apropos|a-propos|services|solutions|company|entreprise|societe|products|produits|catalogue/i;
 const sourcingBusinessTextPattern =
   /contact|services|solutions|a propos|about us|our services|nos services|entreprise|societe|company|clients|produits|catalogue|devis|whatsapp|email|telephone|phone|adresse|bureau/i;
 const sourcingDecisionMakerPattern =
   /fondateur|founder|directeur|ceo|gerant|manager|responsable|sales|commercial|contact/i;
+const genericSectorStopWords = new Set([
+  "entreprise",
+  "entreprises",
+  "societe",
+  "societes",
+  "services",
+  "service",
+  "b2b",
+  "btob",
+  "pme",
+  "cabinet",
+  "cabinets",
+  "business",
+  "solutions",
+  "france",
+  "europe",
+  "afrique"
+]);
 
 function normalizeSearchText(value: string) {
   return value
@@ -1656,9 +1674,22 @@ function normalizeSearchText(value: string) {
 }
 
 function buildSourcingSearchQuery(brief: string, sector: string, zone: string) {
-  const query = [brief, sector, zone].filter(Boolean).join(" ").trim();
-  const exclusions = "-job -jobs -career -careers -emploi -emplois -recrutement -vacancy -internship -stage";
+  const sectorPhrase = sector.trim() ? `"${sector.trim()}"` : "";
+  const query = [sectorPhrase, brief.trim(), zone.trim(), "site officiel contact services"].filter(Boolean).join(" ").trim();
+  const exclusions =
+    "-job -jobs -career -careers -emploi -emplois -recrutement -vacancy -internship -stage -annuaire -directory -marketplace -franchise -site:europages.fr -site:kompass.com -site:business.google.com";
   return `${query} ${exclusions}`.trim();
+}
+
+function extractSectorKeywords(sector: string, brief: string) {
+  return Array.from(
+    new Set(
+      `${sector} ${brief}`
+        .split(/[^a-zA-Z0-9À-ÿ]+/)
+        .map((item) => normalizeSearchText(item).trim())
+        .filter((item) => item.length >= 4 && !genericSectorStopWords.has(item))
+    )
+  ).slice(0, 8);
 }
 
 function isRejectedSourcingCandidate({
@@ -1711,6 +1742,31 @@ function hasStrongBusinessSignals({
   } catch {
     return businessTextSignal || decisionMakerSignal;
   }
+}
+
+function matchesSectorIntent(
+  {
+    title,
+    url,
+    snippet,
+    summary
+  }: {
+    title: string;
+    url: string;
+    snippet: string;
+    summary: string;
+  },
+  sector: string,
+  brief: string
+) {
+  const sectorKeywords = extractSectorKeywords(sector, brief);
+  if (!sectorKeywords.length) return true;
+
+  const text = normalizeSearchText(`${title} ${snippet} ${summary} ${url}`);
+  const matches = sectorKeywords.filter((keyword) => text.includes(keyword));
+
+  if (sectorKeywords.length === 1) return matches.length >= 1;
+  return matches.length >= Math.min(2, sectorKeywords.length);
 }
 
 function dedupeSourcingProspects(prospects: NonNullable<SaasSourcingRun["prospects"][number]>[]) {
@@ -3936,6 +3992,9 @@ saasRouter.post("/modules/sourcing-commercial/runs", async (req, res, next) => {
         const summary = (await extractPageContent(result.url)) ?? result.snippet;
         const combinedText = `${result.title} ${result.snippet} ${summary}`;
         if (isRejectedSourcingCandidate({ title: result.title, url: result.url, snippet: result.snippet, summary })) {
+          return null;
+        }
+        if (!matchesSectorIntent({ title: result.title, url: result.url, snippet: result.snippet, summary }, sector, brief)) {
           return null;
         }
         if (!hasStrongBusinessSignals({ title: result.title, url: result.url, snippet: result.snippet, summary })) {
