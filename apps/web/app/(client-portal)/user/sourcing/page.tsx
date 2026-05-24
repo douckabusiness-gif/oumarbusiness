@@ -153,7 +153,6 @@ export default function UserSourcingPage() {
     try {
       setRunning(true);
       setError("");
-      setSuccess(null);
       const res = await fetch(`${apiBaseUrl}/api/sourcing/modules/sourcing-commercial/runs`, {
         method: "POST",
         credentials: "include",
