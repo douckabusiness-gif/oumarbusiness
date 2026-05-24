@@ -1,6 +1,21 @@
-const CACHE_NAME = "oumar-business-pwa-v4";
+const CACHE_NAME = "oumar-business-pwa-v5";
 const OFFLINE_URL = "/offline";
-const CORE_ASSETS = ["/", OFFLINE_URL, "/manifest.webmanifest", "/icon?size=192", "/icon?size=512", "/apple-icon"];
+const CORE_ASSETS = [
+  "/",
+  "/sourcing",
+  "/sourcing?source=pwa",
+  "/login",
+  "/register",
+  "/user/login",
+  "/user/register",
+  "/client/login",
+  "/client/register",
+  OFFLINE_URL,
+  "/manifest.webmanifest",
+  "/icon?size=192",
+  "/icon?size=512",
+  "/apple-icon"
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -68,7 +83,7 @@ self.addEventListener("push", (event) => {
     badge: payload.badge || "/icon?size=192",
     tag: payload.tag || "oumar-business",
     data: {
-      url: payload.url || "/overview"
+      url: payload.url || "/sourcing"
     }
   };
 
@@ -77,7 +92,7 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const targetUrl = event.notification.data?.url || "/overview";
+  const targetUrl = event.notification.data?.url || "/sourcing";
 
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {

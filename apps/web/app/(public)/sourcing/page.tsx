@@ -10,6 +10,7 @@ import {
   Clock,
   Globe2,
   MapPin,
+  Menu,
   Radar,
   Search,
   Sparkles,
@@ -18,6 +19,7 @@ import {
   Target,
   TrendingUp,
   Users,
+  X,
   Zap
 } from "lucide-react";
 import { getApiBaseUrl } from "@/lib/api";
@@ -159,6 +161,7 @@ export default function SourcingLandingPage() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loadingPlans, setLoadingPlans] = useState(true);
   const [branding, setBranding] = useState<{ agencyName?: string; logoUrl?: string } | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -216,7 +219,7 @@ export default function SourcingLandingPage() {
           <div className="flex items-center gap-2">
             <Link
               href="/user/login"
-              className="hidden rounded-xl border border-line px-4 py-2 text-sm font-semibold text-zinc-200 transition hover:border-gold/40 hover:text-gold sm:inline-flex"
+              className="inline-flex rounded-xl border border-line px-4 py-2 text-sm font-semibold text-zinc-200 transition hover:border-gold/40 hover:text-gold"
             >
               Connexion
             </Link>
@@ -227,8 +230,43 @@ export default function SourcingLandingPage() {
               Commencer
               <ArrowRight className="h-3.5 w-3.5" />
             </Link>
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen((value) => !value)}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-panel text-white md:hidden"
+              aria-expanded={mobileMenuOpen}
+              aria-label={mobileMenuOpen ? "Fermer le menu" : "Ouvrir le menu"}
+            >
+              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
           </div>
         </div>
+        {mobileMenuOpen ? (
+          <div className="border-t border-blue-800/30 bg-blue-950/95 md:hidden">
+            <div className="mx-auto flex max-w-7xl flex-col gap-3 px-5 py-4">
+              <a href="#comment" className="rounded-xl border border-line bg-panel px-4 py-3 text-sm font-semibold text-white">
+                Comment ca marche
+              </a>
+              <a href="#agents" className="rounded-xl border border-line bg-panel px-4 py-3 text-sm font-semibold text-white">
+                Les agents
+              </a>
+              <a href="#tarifs" className="rounded-xl border border-line bg-panel px-4 py-3 text-sm font-semibold text-white">
+                Tarifs
+              </a>
+              <Link href="/" className="rounded-xl border border-line bg-panel px-4 py-3 text-sm font-semibold text-white">
+                Accueil
+              </Link>
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <Link href="/user/login" className="inline-flex items-center justify-center rounded-xl border border-line px-4 py-3 text-sm font-semibold text-white">
+                  Connexion
+                </Link>
+                <Link href="/user/register" className="inline-flex items-center justify-center rounded-xl bg-gold px-4 py-3 text-sm font-bold text-black">
+                  Inscription
+                </Link>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </header>
 
       <main>

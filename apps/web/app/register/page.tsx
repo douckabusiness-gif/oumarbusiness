@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { PublicPortalEntry } from "@/components/public/PublicPortalEntry";
 
 export default function RegisterPage() {
-  redirect("/client/register");
+  return <PublicPortalEntry mode="register" />;
 }

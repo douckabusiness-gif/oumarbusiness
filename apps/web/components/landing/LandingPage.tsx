@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Clock,
   Globe2,
+  Menu,
   MessageCircle,
   MonitorSmartphone,
   Radar,
@@ -17,6 +18,7 @@ import {
   Send,
   Sparkles,
   TrendingUp,
+  X,
   Zap
 } from "lucide-react";
 import { getApiBaseUrl } from "@/lib/api";
@@ -100,6 +102,7 @@ function Counter({ value, className }: { value: string; className?: string }) {
 
 export function LandingPage() {
   const [branding, setBranding] = useState<{ agencyName?: string; logoUrl?: string; phone?: string } | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -173,7 +176,7 @@ export function LandingPage() {
           <div className="flex items-center gap-2">
             <Link
               href="/login"
-              className="hidden rounded-xl border border-line px-4 py-2.5 text-sm font-semibold text-white transition hover:border-gold/60 hover:text-gold sm:inline-flex"
+              className="inline-flex rounded-xl border border-line px-4 py-2.5 text-sm font-semibold text-white transition hover:border-gold/60 hover:text-gold"
             >
               Connexion
             </Link>
@@ -198,8 +201,47 @@ export function LandingPage() {
               <span className="hidden sm:inline">Parler sur WhatsApp</span>
               <span className="sm:hidden">WhatsApp</span>
             </a>
+
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen((value) => !value)}
+              className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-line bg-panel text-white md:hidden"
+              aria-expanded={mobileMenuOpen}
+              aria-label={mobileMenuOpen ? "Fermer le menu" : "Ouvrir le menu"}
+            >
+              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
           </div>
         </div>
+        {mobileMenuOpen ? (
+          <div className="border-t border-line/80 bg-ink/95 md:hidden">
+            <div className="mx-auto flex max-w-7xl flex-col gap-3 px-5 py-4">
+              <a href="#services" className="rounded-xl border border-line bg-panel px-4 py-3 text-sm font-semibold text-white">
+                Services
+              </a>
+              <a href="#process" className="rounded-xl border border-line bg-panel px-4 py-3 text-sm font-semibold text-white">
+                Processus
+              </a>
+              <a href="#zone" className="rounded-xl border border-line bg-panel px-4 py-3 text-sm font-semibold text-white">
+                Zones
+              </a>
+              <Link href="/marketplace" className="rounded-xl border border-line bg-panel px-4 py-3 text-sm font-semibold text-white">
+                Marketplace
+              </Link>
+              <Link href="/sourcing" className="rounded-xl border border-gold/30 bg-gold/10 px-4 py-3 text-sm font-semibold text-gold">
+                Trouver des Clients
+              </Link>
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <Link href="/login" className="inline-flex items-center justify-center rounded-xl border border-line px-4 py-3 text-sm font-semibold text-white">
+                  Connexion
+                </Link>
+                <Link href="/register" className="inline-flex items-center justify-center rounded-xl bg-gold px-4 py-3 text-sm font-bold text-black">
+                  Inscription
+                </Link>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </header>
 
       <main>
