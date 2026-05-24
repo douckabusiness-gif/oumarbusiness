@@ -8,7 +8,7 @@ import { getApiBaseUrl } from "@/lib/api";
 const apiBaseUrl = getApiBaseUrl();
 
 // Pages accessibles sans authentification
-const PUBLIC_PATHS = ["/user/login", "/user/register", "/user/forgot-password", "/user/reset-password"];
+const PUBLIC_PATHS = ["/user/login", "/user/register", "/user/forgot-password", "/user/reset-password", "/user/verify-email"];
 
 export default function UserPortalLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();

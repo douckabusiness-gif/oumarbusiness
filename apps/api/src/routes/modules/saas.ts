@@ -29,6 +29,7 @@ const SAAS_EMAIL_CONFIGS_KEY = "saas_email_configs";
 const SAAS_SOURCING_PLANS_KEY = "saas_sourcing_plans";
 const SAAS_GLOBAL_AGENTS_KEY = "saas_global_agents";
 const SAAS_RESET_TOKENS_KEY = "saas_password_reset_tokens";
+const SAAS_VERIFY_TOKENS_KEY = "saas_email_verify_tokens";
 const SAAS_PAYMENT_METHODS_KEY = "saas_payment_methods";
 const SAAS_PAYMENT_REQUESTS_KEY = "saas_payment_requests";
 const SAAS_COOKIE = "ob_saas_session";
@@ -106,6 +107,7 @@ type SaasUser = {
   name: string;
   email: string;
   passwordHash: string;
+  verifiedAt: string;
   role: "owner" | "member";
   createdAt: string;
   updatedAt: string;
@@ -476,11 +478,27 @@ function parseUser(value: unknown): SaasUser | null {
   const name = typeof value.name === "string" ? value.name : "";
   const email = typeof value.email === "string" ? value.email : "";
   const passwordHash = typeof value.passwordHash === "string" ? value.passwordHash : "";
-  const role = value.role === "member" ? "member" : "owner";
   const createdAt = typeof value.createdAt === "string" ? value.createdAt : "";
+  const verifiedAt =
+    typeof value.verifiedAt === "string"
+      ? value.verifiedAt
+      : Object.prototype.hasOwnProperty.call(value, "verifiedAt")
+        ? ""
+        : createdAt;
+  const role = value.role === "member" ? "member" : "owner";
   const updatedAt = typeof value.updatedAt === "string" ? value.updatedAt : createdAt;
   if (!id || !companyId || !name || !email || !passwordHash || !createdAt || !updatedAt) return null;
-  return { id, companyId, name, email, passwordHash, role, createdAt, updatedAt };
+  return {
+    id,
+    companyId,
+    name,
+    email,
+    passwordHash,
+    verifiedAt,
+    role,
+    createdAt,
+    updatedAt
+  };
 }
 
 function parseSession(value: unknown): SaasSession | null {
@@ -959,6 +977,7 @@ const loadUsers = () => loadStoredArray(SAAS_USERS_KEY, parseUser);
 const saveUsers = (items: SaasUser[]) => saveStoredArray(SAAS_USERS_KEY, items);
 
 type PasswordResetToken = { id: string; userId: string; email: string; expiresAt: string };
+type EmailVerifyToken = { id: string; userId: string; email: string; expiresAt: string };
 
 // ─── Paiement manuel Wave / Orange Money ───────────────────────────────────
 
@@ -1045,6 +1064,13 @@ function isResetToken(v: unknown): v is PasswordResetToken {
 }
 const loadResetTokens = () => loadStoredArray(SAAS_RESET_TOKENS_KEY, (v) => isResetToken(v) ? v : null);
 const saveResetTokens = (items: PasswordResetToken[]) => saveStoredArray(SAAS_RESET_TOKENS_KEY, items);
+function isVerifyToken(v: unknown): v is EmailVerifyToken {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.id === "string" && typeof o.userId === "string" && typeof o.email === "string" && typeof o.expiresAt === "string";
+}
+const loadVerifyTokens = () => loadStoredArray(SAAS_VERIFY_TOKENS_KEY, (v) => isVerifyToken(v) ? v : null);
+const saveVerifyTokens = (items: EmailVerifyToken[]) => saveStoredArray(SAAS_VERIFY_TOKENS_KEY, items);
 const loadAgentProfiles = () => loadStoredArray(SAAS_AGENT_PROFILES_KEY, parseAgentProfile);
 const saveAgentProfiles = (items: SaasAgentProfile[]) => saveStoredArray(SAAS_AGENT_PROFILES_KEY, items);
 const loadSubscriptions = () => loadStoredArray(SAAS_SUBSCRIPTIONS_KEY, parseSubscription);
@@ -1936,7 +1962,7 @@ async function resolveAuthenticatedContext(req: Request) {
 
   const user = users.find((item) => item.id === session.userId && item.companyId === session.companyId);
   const company = companies.find((item) => item.id === session.companyId);
-  if (!user || !company) return null;
+  if (!user || !company || !user.verifiedAt) return null;
   return { session, user, company };
 }
 
@@ -1979,9 +2005,44 @@ function toPublicUser(user: SaasUser) {
     companyId: user.companyId,
     name: user.name,
     email: user.email,
+    verified: Boolean(user.verifiedAt),
     role: user.role,
     createdAt: user.createdAt
   };
+}
+
+function getPublicAppUrl(req: Request) {
+  return (process.env.APP_URL ?? req.get("origin") ?? req.get("referer") ?? "http://localhost:1010").replace(/\/$/, "");
+}
+
+async function sendSourcingVerificationEmail(req: Request, user: SaasUser) {
+  const tokenId = randomBytes(32).toString("hex");
+  const appUrl = getPublicAppUrl(req);
+  const verifyUrl = `${appUrl}/user/verify-email?token=${tokenId}`;
+  const runtimeEmail = await getRuntimeEmailAccount("main");
+  const engine = new EmailEngine();
+
+  await engine.send({
+    account: runtimeEmail,
+    from: `${runtimeEmail.name ?? "Oumar Business"} <${runtimeEmail.email}>`,
+    to: [user.email],
+    subject: "Confirmez votre email sourcing",
+    text: `Bonjour ${user.name},\n\nConfirmez votre email pour activer votre espace sourcing :\n${verifyUrl}\n\nCe lien expire dans 24 heures.`,
+    html: `<div style="font-family:sans-serif;max-width:520px;margin:auto;padding:32px;background:#0e0e0e;color:#fff;border-radius:16px">
+      <h2 style="color:#d4a020;margin:0 0 16px">Confirmez votre email</h2>
+      <p>Bonjour <strong>${user.name}</strong>,</p>
+      <p>Confirmez votre email pour activer votre espace sourcing.</p>
+      <a href="${verifyUrl}" style="display:inline-block;margin:24px 0;padding:14px 28px;background:#d4a020;color:#000;border-radius:12px;font-weight:bold;text-decoration:none">Confirmer mon email</a>
+      <p style="color:#888;font-size:12px">Ce lien expire dans 24 heures.</p>
+    </div>`
+  });
+
+  return {
+    id: tokenId,
+    userId: user.id,
+    email: user.email,
+    expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString()
+  } satisfies EmailVerifyToken;
 }
 
 function toPublicAgentProfile(profile: SaasAgentProfile) {
@@ -2093,11 +2154,11 @@ saasRouter.post("/auth/register", sourcingAuthRateLimit, async (req, res, next) 
     if (!email.includes("@")) return res.status(400).json({ error: "Email invalide." });
     if (password.length < 6) return res.status(400).json({ error: "Le mot de passe doit contenir au moins 6 caracteres." });
 
-    const [users, companies, sessions, subscriptions] = await Promise.all([
+    const [users, companies, subscriptions, verifyTokens] = await Promise.all([
       loadUsers(),
       loadCompanies(),
-      loadSessions(),
-      loadSubscriptions()
+      loadSubscriptions(),
+      loadVerifyTokens()
     ]);
     if (users.some((item) => item.email === email)) {
       return res.status(400).json({ error: "Un compte utilisateur sourcing existe deja avec cet email." });
@@ -2144,31 +2205,26 @@ saasRouter.post("/auth/register", sourcingAuthRateLimit, async (req, res, next) 
       name,
       email,
       passwordHash: hashPassword(password),
+      verifiedAt: "",
       role: "owner",
       createdAt: now,
       updatedAt: now
     };
 
-    const session: SaasSession = {
-      id: randomUUID(),
-      userId: user.id,
-      companyId: company.id,
-      createdAt: now,
-      expiresAt: new Date(Date.now() + SESSION_DURATION_MS).toISOString()
-    };
+    let verifyToken: EmailVerifyToken;
+    try {
+      verifyToken = await sendSourcingVerificationEmail(req, user);
+    } catch {
+      return res.status(502).json({ error: "Impossible d'envoyer l'email de confirmation pour le moment." });
+    }
 
     await saveCompanies([company, ...companies]);
     await saveUsers([user, ...users]);
-    await saveSessions([session, ...sessions.filter((item) => item.userId !== user.id)]);
+    await saveVerifyTokens([...verifyTokens.filter((item) => item.userId !== user.id), verifyToken]);
     await saveSubscriptions([sourcingSubscription, ...subscriptions]);
-    const runtime = await getCompanyRuntime(company);
-    setSessionCookie(res, session.id);
+    clearSessionCookie(res);
 
-    res.status(201).json({
-      ok: true,
-      user: toPublicUser(user),
-      company: toPublicCompany(runtime.company, runtime.subscriptions)
-    });
+    res.status(201).json({ ok: true, requiresVerification: true, email: user.email });
   } catch (error) {
     next(error);
   }
@@ -2183,6 +2239,12 @@ saasRouter.post("/auth/login", sourcingAuthRateLimit, async (req, res, next) => 
     const user = users.find((item) => item.email === email);
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return res.status(401).json({ error: "Email ou mot de passe invalide." });
+    }
+    if (!user.verifiedAt) {
+      return res.status(403).json({
+        error: "Confirmez votre email avant de vous connecter.",
+        code: "EMAIL_NOT_VERIFIED"
+      });
     }
 
     const company = companies.find((item) => item.id === user.companyId);
@@ -2206,6 +2268,55 @@ saasRouter.post("/auth/login", sourcingAuthRateLimit, async (req, res, next) => 
       user: toPublicUser(user),
       company: toPublicCompany(runtime.company, runtime.subscriptions)
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.post("/auth/resend-verification", sourcingAuthRateLimit, async (req, res, next) => {
+  try {
+    const email = typeof req.body?.email === "string" ? normalizeEmail(req.body.email) : "";
+    if (!email.includes("@")) return res.status(400).json({ error: "Email invalide." });
+
+    const [users, verifyTokens] = await Promise.all([loadUsers(), loadVerifyTokens()]);
+    const user = users.find((item) => item.email === email);
+    if (!user || user.verifiedAt) return res.json({ ok: true });
+
+    const token = await sendSourcingVerificationEmail(req, user);
+    await saveVerifyTokens([...verifyTokens.filter((item) => item.userId !== user.id), token]);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.post("/auth/verify-email", sourcingAuthRateLimit, async (req, res, next) => {
+  try {
+    const tokenId = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+    if (!tokenId) return res.status(400).json({ error: "Token manquant." });
+
+    const [users, tokens] = await Promise.all([loadUsers(), loadVerifyTokens()]);
+    const token = tokens.find((item) => item.id === tokenId);
+    if (!token) return res.status(400).json({ error: "Lien invalide ou deja utilise." });
+
+    const index = users.findIndex((item) => item.id === token.userId);
+    if (index === -1) {
+      await saveVerifyTokens(tokens.filter((item) => item.id !== tokenId));
+      return res.status(404).json({ error: "Utilisateur introuvable." });
+    }
+
+    const now = new Date().toISOString();
+    users[index] = {
+      ...users[index]!,
+      verifiedAt: now,
+      updatedAt: now
+    };
+
+    await saveUsers(users);
+    await saveVerifyTokens(tokens.filter((item) => item.id !== tokenId));
+    clearSessionCookie(res);
+
+    res.json({ ok: true, user: toPublicUser(users[index]!) });
   } catch (error) {
     next(error);
   }

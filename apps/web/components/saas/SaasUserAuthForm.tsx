@@ -45,6 +45,9 @@ export function SaasUserAuthForm({ mode }: Props) {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
+  const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [resendingVerification, setResendingVerification] = useState(false);
   const [branding, setBranding] = useState<{ agencyName?: string; logoUrl?: string } | null>(null);
 
   useEffect(() => {
@@ -63,6 +66,7 @@ export function SaasUserAuthForm({ mode }: Props) {
   async function submit() {
     setLoading(true);
     setError("");
+    setInfo("");
     try {
       const res = await fetch(`${apiBaseUrl}/api/sourcing/auth/${mode}`, {
         method: "POST",
@@ -70,13 +74,50 @@ export function SaasUserAuthForm({ mode }: Props) {
         credentials: "include",
         body: JSON.stringify({ name, company, email, password })
       });
-      const data = (await res.json()) as { ok?: boolean; error?: string };
-      if (!res.ok || !data.ok) throw new Error(data.error ?? "Action impossible.");
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        code?: string;
+        requiresVerification?: boolean;
+        email?: string;
+      };
+      if (!res.ok || !data.ok) {
+        if (res.status === 403 && data.code === "EMAIL_NOT_VERIFIED") {
+          setAwaitingVerification(true);
+          setInfo("Ton email n'est pas encore confirme. Verifie ta boite mail ou renvoie le lien.");
+        }
+        throw new Error(data.error ?? "Action impossible.");
+      }
+      if (data.requiresVerification) {
+        setAwaitingVerification(true);
+        setInfo(`Un email de confirmation a ete envoye a ${data.email ?? email}.`);
+        return;
+      }
       router.push("/user/dashboard");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Action impossible.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function resendVerification() {
+    try {
+      setResendingVerification(true);
+      setError("");
+      setInfo("");
+      const res = await fetch(`${apiBaseUrl}/api/sourcing/auth/resend-verification`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Impossible de renvoyer l'email.");
+      setInfo(`Un nouveau lien de confirmation a ete renvoye a ${email}.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Impossible de renvoyer l'email.");
+    } finally {
+      setResendingVerification(false);
     }
   }
 
@@ -273,6 +314,29 @@ export function SaasUserAuthForm({ mode }: Props) {
               {error && (
                 <div className="mt-5 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
                   {error}
+                </div>
+              )}
+
+              {awaitingVerification && (
+                <div className="mt-5 rounded-2xl border border-gold/30 bg-gold/10 px-4 py-3 text-sm text-zinc-100">
+                  Confirme ton email avant d'acceder a l'interface.
+                  <div className="mt-3">
+                    <button
+                      type="button"
+                      onClick={() => void resendVerification()}
+                      disabled={resendingVerification || !email}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-gold/30 bg-ink px-4 font-semibold text-gold disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {resendingVerification ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      Renvoyer le lien
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {info && (
+                <div className="mt-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+                  {info}
                 </div>
               )}
 

@@ -30,6 +30,9 @@ export function ClientAuthForm({ mode, audience = "client" }: ClientAuthFormProp
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
+  const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [resendingVerification, setResendingVerification] = useState(false);
   const [branding, setBranding] = useState<BrandingPayload | null>(null);
 
   useEffect(() => {
@@ -118,9 +121,25 @@ export function ClientAuthForm({ mode, audience = "client" }: ClientAuthFormProp
         })
       });
 
-      const data = (await response.json()) as { ok?: boolean; error?: string };
+      const data = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        code?: string;
+        requiresVerification?: boolean;
+        email?: string;
+      };
       if (!response.ok || !data.ok) {
+        if (response.status === 403 && data.code === "EMAIL_NOT_VERIFIED") {
+          setAwaitingVerification(true);
+          setInfo("Ton email n'est pas encore confirme. Verifie ta boite mail ou renvoie le lien.");
+        }
         throw new Error(data.error ?? "Action impossible.");
+      }
+
+      if (data.requiresVerification) {
+        setAwaitingVerification(true);
+        setInfo(`Un email de confirmation a ete envoye a ${data.email ?? email}.`);
+        return;
       }
 
       router.push(copy.redirectTo);
@@ -128,6 +147,27 @@ export function ClientAuthForm({ mode, audience = "client" }: ClientAuthFormProp
       setError(caught instanceof Error ? caught.message : "Action impossible.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function resendVerification() {
+    try {
+      setResendingVerification(true);
+      setError("");
+      setInfo("");
+      const endpoint = isSourcingUser ? "/api/sourcing/auth/resend-verification" : "/api/client-portal/resend-verification";
+      const response = await fetch(`${apiBaseUrl}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      const data = (await response.json()) as { ok?: boolean; error?: string };
+      if (!response.ok || !data.ok) throw new Error(data.error ?? "Impossible de renvoyer l'email.");
+      setInfo(`Un nouveau lien de confirmation a ete renvoye a ${email}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Impossible de renvoyer l'email.");
+    } finally {
+      setResendingVerification(false);
     }
   }
 
@@ -238,9 +278,30 @@ export function ClientAuthForm({ mode, audience = "client" }: ClientAuthFormProp
                 />
               </div>
 
-              {isSourcingUser && !isLogin ? (
+              {awaitingVerification ? (
+                <div className="mt-6 rounded-2xl border border-gold/30 bg-gold/10 px-4 py-4 text-sm leading-6 text-zinc-200">
+                  Confirme ton email avant d'acceder a l'interface.
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void resendVerification()}
+                      disabled={resendingVerification || !email}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-gold/30 bg-ink px-4 font-semibold text-gold disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {resendingVerification ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      Renvoyer le lien
+                    </button>
+                  </div>
+                </div>
+              ) : isSourcingUser && !isLogin ? (
                 <div className="mt-6 rounded-2xl border border-line bg-ink px-4 py-4 text-sm leading-6 text-zinc-300">
                   Une fois le compte cree, ton espace sourcing est disponible.
+                </div>
+              ) : null}
+
+              {info ? (
+                <div className="mt-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+                  {info}
                 </div>
               ) : null}
 
