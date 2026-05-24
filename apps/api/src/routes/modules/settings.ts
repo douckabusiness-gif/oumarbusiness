@@ -682,22 +682,98 @@ async function fetchModels(provider: string, apiKey: string, baseUrl: string): P
   return modelNamesFromPayload(await response.json());
 }
 
-const whatsappSettings = {
+const WHATSAPP_SETTINGS_KEY = "whatsapp-settings";
+
+const whatsappDefaults = {
   cloud: {
     phoneNumberId: process.env.META_PHONE_NUMBER_ID ?? "",
     businessAccountId: process.env.META_WHATSAPP_BUSINESS_ID ?? "",
-    webhookVerifyTokenConfigured: Boolean(process.env.META_WEBHOOK_VERIFY_TOKEN),
-    accessTokenConfigured: Boolean(process.env.META_ACCESS_TOKEN),
+    accessToken: "",
+    verifyToken: "",
     webhookPath: "/api/whatsapp/cloud/webhook"
   },
   baileys: {
     defaultSessionName: "Oumar personnel",
+    phoneNumber: "",
     sessionStorage: "postgresql-encrypted",
     dailyBroadcastLimit: 200,
     minDelayMs: 1000,
     maxDelayMs: 3000
   }
 };
+
+type WhatsAppSettingsPayload = typeof whatsappDefaults;
+
+function normalizeWhatsAppSettings(value: unknown): WhatsAppSettingsPayload {
+  const source = asRecord(value);
+  const cloud = asRecord(source.cloud);
+  const baileys = asRecord(source.baileys);
+
+  return {
+    cloud: {
+      phoneNumberId: asSettingString(cloud.phoneNumberId, whatsappDefaults.cloud.phoneNumberId),
+      businessAccountId: asSettingString(cloud.businessAccountId, whatsappDefaults.cloud.businessAccountId),
+      accessToken: asSettingString(cloud.accessToken, whatsappDefaults.cloud.accessToken),
+      verifyToken: asSettingString(cloud.verifyToken, whatsappDefaults.cloud.verifyToken),
+      webhookPath: whatsappDefaults.cloud.webhookPath
+    },
+    baileys: {
+      defaultSessionName: asSettingString(baileys.defaultSessionName, whatsappDefaults.baileys.defaultSessionName),
+      phoneNumber: asSettingString(baileys.phoneNumber, whatsappDefaults.baileys.phoneNumber),
+      sessionStorage: whatsappDefaults.baileys.sessionStorage,
+      dailyBroadcastLimit: asSettingNumber(baileys.dailyBroadcastLimit, whatsappDefaults.baileys.dailyBroadcastLimit),
+      minDelayMs: asSettingNumber(baileys.minDelayMs, whatsappDefaults.baileys.minDelayMs),
+      maxDelayMs: asSettingNumber(baileys.maxDelayMs, whatsappDefaults.baileys.maxDelayMs)
+    }
+  };
+}
+
+function serializeWhatsAppSettings(settings: WhatsAppSettingsPayload) {
+  return {
+    cloud: {
+      ...settings.cloud,
+      webhookVerifyTokenConfigured: Boolean(settings.cloud.verifyToken || process.env.META_WEBHOOK_VERIFY_TOKEN),
+      accessTokenConfigured: Boolean(settings.cloud.accessToken || process.env.META_ACCESS_TOKEN)
+    },
+    baileys: settings.baileys
+  };
+}
+
+async function loadWhatsAppSettings() {
+  const stored = await prisma.appSetting.findUnique({
+    where: { key: WHATSAPP_SETTINGS_KEY }
+  });
+
+  return normalizeWhatsAppSettings(stored?.value);
+}
+
+async function saveWhatsAppSettings(input: unknown) {
+  const current = await loadWhatsAppSettings();
+  const body = asRecord(input);
+  const next = normalizeWhatsAppSettings({
+    ...current,
+    ...body,
+    cloud: {
+      ...current.cloud,
+      ...asRecord(body.cloud)
+    },
+    baileys: {
+      ...current.baileys,
+      ...asRecord(body.baileys)
+    }
+  });
+
+  await prisma.appSetting.upsert({
+    where: { key: WHATSAPP_SETTINGS_KEY },
+    update: { value: next as never },
+    create: {
+      key: WHATSAPP_SETTINGS_KEY,
+      value: next as never
+    }
+  });
+
+  return next;
+}
 
 const EMAIL_SETTINGS_KEY = "email-settings";
 
@@ -1543,16 +1619,25 @@ settingsRouter.post("/ai-providers/:provider/test-chat", async (req, res) => {
   }
 });
 
-settingsRouter.get("/whatsapp", (_req, res) => {
-  res.json(whatsappSettings);
+settingsRouter.get("/whatsapp", async (_req, res, next) => {
+  try {
+    res.json(serializeWhatsAppSettings(await loadWhatsAppSettings()));
+  } catch (error) {
+    next(error);
+  }
 });
 
-settingsRouter.put("/whatsapp", (req, res) => {
-  res.json({
-    ok: true,
-    saved: true,
-    settings: req.body
-  });
+settingsRouter.put("/whatsapp", async (req, res, next) => {
+  try {
+    const settings = await saveWhatsAppSettings(req.body);
+    res.json({
+      ok: true,
+      saved: true,
+      settings: serializeWhatsAppSettings(settings)
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 settingsRouter.get("/email", async (_req, res, next) => {

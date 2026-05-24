@@ -1,4 +1,4 @@
-const CACHE_NAME = "oumar-business-pwa-v3";
+const CACHE_NAME = "oumar-business-pwa-v4";
 const OFFLINE_URL = "/offline";
 const CORE_ASSETS = ["/", OFFLINE_URL, "/manifest.webmanifest", "/icon?size=192", "/icon?size=512", "/apple-icon"];
 
@@ -21,6 +21,10 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
 
   if (request.method !== "GET") return;
+
+  if (url.origin === self.location.origin && (url.pathname.startsWith("/_next/") || url.pathname.startsWith("/uploads/"))) {
+    return;
+  }
 
   if (request.mode === "navigate") {
     event.respondWith(

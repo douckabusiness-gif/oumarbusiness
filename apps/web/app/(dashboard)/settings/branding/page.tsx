@@ -187,7 +187,7 @@ export default function BrandingSettingsPage() {
               onChange={(value) => setData((current) => ({ ...current, contactEmail: value }))}
             />
             <Field
-              label="Numero de telephone"
+              label="Numero telephone / WhatsApp public"
               value={data.phone}
               onChange={(value) => setData((current) => ({ ...current, phone: value }))}
             />

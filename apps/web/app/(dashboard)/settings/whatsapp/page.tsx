@@ -39,6 +39,19 @@ type BaileysSession = {
   createdAt: string;
 };
 
+type StoredWhatsAppSettings = {
+  cloud?: {
+    phoneNumberId?: string;
+    businessAccountId?: string;
+    accessToken?: string;
+    verifyToken?: string;
+  };
+  baileys?: {
+    defaultSessionName?: string;
+    phoneNumber?: string;
+  };
+};
+
 export default function WhatsAppSettingsPage() {
   // Cloud API (Meta)
   const [phoneNumberId, setPhoneNumberId]           = useState("");
@@ -69,13 +82,36 @@ export default function WhatsAppSettingsPage() {
 
   // Load current settings on mount
   useEffect(() => {
-    void fetch(`${apiBaseUrl}/api/settings/whatsapp`)
-      .then((r) => r.json())
-      .then((data: { cloud?: { phoneNumberId?: string; businessAccountId?: string } }) => {
-        if (data.cloud?.phoneNumberId)     setPhoneNumberId(data.cloud.phoneNumberId);
-        if (data.cloud?.businessAccountId) setBusinessAccountId(data.cloud.businessAccountId);
-      })
-      .catch(() => {});
+    let active = true;
+
+    async function loadSettings() {
+      try {
+        const [settingsRes, brandingRes] = await Promise.all([
+          fetch(`${apiBaseUrl}/api/settings/whatsapp`, { cache: "no-store" }),
+          fetch(`${apiBaseUrl}/api/settings/branding`, { cache: "no-store" })
+        ]);
+        if (!settingsRes.ok || !active) return;
+
+        const settings = (await settingsRes.json()) as StoredWhatsAppSettings;
+        const branding = brandingRes.ok ? ((await brandingRes.json()) as { phone?: string }) : {};
+
+        if (!active) return;
+
+        setPhoneNumberId(settings.cloud?.phoneNumberId ?? "");
+        setBusinessAccountId(settings.cloud?.businessAccountId ?? "");
+        setAccessToken(settings.cloud?.accessToken ?? "");
+        setVerifyToken(settings.cloud?.verifyToken ?? "");
+        setSessionName(settings.baileys?.defaultSessionName ?? "Oumar personnel");
+        setPhoneNumber(settings.baileys?.phoneNumber ?? branding.phone ?? "");
+      } catch {
+        // Keep form usable even if settings are unavailable.
+      }
+    }
+
+    void loadSettings();
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Socket.io + initial session fetch
@@ -118,15 +154,72 @@ export default function WhatsAppSettingsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!activeSession?.id) return;
+    if (activeSession.connected) {
+      setBaileysStatus("Connecte");
+      setQrDataUrl(null);
+      return;
+    }
+
+    const sessionId = activeSession.id;
+    const fallbackStatus = activeSession.status;
+    let active = true;
+
+    async function loadQr() {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/whatsapp/baileys/sessions/${sessionId}/qr`, {
+          cache: "no-store"
+        });
+        if (!response.ok || !active) return;
+
+        const data = (await response.json()) as {
+          status?: string;
+          connected?: boolean;
+          qrDataUrl?: string;
+        };
+
+        if (!active) return;
+
+        if (data.connected) {
+          setBaileysStatus("Connecte");
+          setQrDataUrl(null);
+          void fetchSessions();
+          return;
+        }
+
+        setBaileysStatus(humanizeSessionStatus(data.status ?? fallbackStatus));
+        setQrDataUrl(data.qrDataUrl ?? null);
+      } catch {
+        // Keep last QR/status displayed if polling fails once.
+      }
+    }
+
+    void loadQr();
+    const interval = window.setInterval(() => {
+      void loadQr();
+    }, 3000);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [activeSession?.connected, activeSession?.id, activeSession?.status]);
+
   async function fetchSessions() {
     try {
       const response = await fetch(`${apiBaseUrl}/api/whatsapp/baileys/sessions`, { cache: "no-store" });
       if (!response.ok) return;
       const data = (await response.json()) as { sessions: BaileysSession[] };
-      setSessions(data.sessions ?? []);
-      if (!activeSessionId && data.sessions?.[0]) {
-        setActiveSessionId(data.sessions[0].id);
-        setBaileysStatus(data.sessions[0].connected ? "Connecte" : data.sessions[0].status);
+      const nextSessions = data.sessions ?? [];
+      setSessions(nextSessions);
+      const current = nextSessions.find((session) => session.id === activeSessionId) ?? nextSessions[0];
+      if (current) {
+        setActiveSessionId(current.id);
+        setBaileysStatus(current.connected ? "Connecte" : humanizeSessionStatus(current.status));
+        if (current.connected) {
+          setQrDataUrl(null);
+        }
       }
     } catch {
       setError("Impossible de charger les sessions Baileys.");
@@ -154,8 +247,18 @@ export default function WhatsAppSettingsPage() {
           },
         }),
       });
+      const brandingResponse = await fetch(`${apiBaseUrl}/api/settings/branding`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: phoneNumber.trim()
+        })
+      });
       const data = (await response.json()) as { ok?: boolean; error?: string };
       if (!response.ok) throw new Error(data.error ?? "Erreur sauvegarde");
+      if (!brandingResponse.ok) {
+        throw new Error("Le numero WhatsApp public n'a pas pu etre enregistre.");
+      }
       setSaveOk(true);
       setTimeout(() => setSaveOk(false), 3000);
     } catch (caught) {
@@ -274,7 +377,7 @@ export default function WhatsAppSettingsPage() {
             <ControlledField label="Business Account ID"  value={businessAccountId} onChange={setBusinessAccountId} placeholder="987654321" />
             <ControlledField label="Access Token"         value={accessToken}       onChange={setAccessToken}       placeholder="EAA..." type="password" />
             <ControlledField label="Webhook Verify Token" value={verifyToken}       onChange={setVerifyToken}       placeholder="random-secret-string" />
-            <Field           label="Webhook URL"          value="http://localhost:4000/api/whatsapp/cloud/webhook" readOnly />
+            <Field           label="Webhook URL"          value={`${apiBaseUrl}/api/whatsapp/cloud/webhook`} readOnly />
           </div>
 
           <div className="mt-6 rounded-lg border border-line bg-ink p-4">
@@ -304,8 +407,11 @@ export default function WhatsAppSettingsPage() {
           </div>
 
           <div className="mt-6 grid gap-4">
-            <ControlledField label="Nom de session"  value={sessionName} onChange={setSessionName} />
-            <ControlledField label="Numero WhatsApp" value={phoneNumber} onChange={setPhoneNumber} />
+            <ControlledField label="Nom de session" value={sessionName} onChange={setSessionName} />
+            <ControlledField label="Numero WhatsApp public" value={phoneNumber} onChange={setPhoneNumber} placeholder="+2250700000000" />
+            <div className="-mt-1 text-xs text-muted">
+              Ce numero alimente aussi le bouton WhatsApp visible sur la page d&apos;accueil.
+            </div>
             <Field label="Cle de chiffrement session" placeholder="32 bytes hex" type="password" />
             <Field label="Limite diffusion par jour"  defaultValue="200" />
             <Field label="Delai entre messages"       defaultValue="1-3 secondes" />
@@ -389,6 +495,24 @@ function statusBadgeClass(status: string) {
     return "rounded-full bg-red-500/15 px-3 py-1 text-xs text-red-300";
   }
   return "rounded-full bg-amber-500/15 px-3 py-1 text-xs text-amber-300";
+}
+
+function humanizeSessionStatus(status: string) {
+  switch (status) {
+    case "open":
+    case "connected":
+      return "Connecte";
+    case "connecting":
+      return "Generation du QR...";
+    case "qr_pending":
+      return "QR pret a scanner";
+    case "reconnecting":
+      return "Reconnexion...";
+    case "disconnected":
+      return "Deconnecte";
+    default:
+      return status || "QR requis";
+  }
 }
 
 function Field({

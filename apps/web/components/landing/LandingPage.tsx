@@ -24,8 +24,6 @@ import { LandingAssistantChat } from "./LandingAssistantChat";
 import { ParticleField } from "./ParticleField";
 
 const apiBaseUrl = getApiBaseUrl();
-const whatsappUrl = "https://wa.me/2250000000000";
-
 const services = [
   {
     title: "Marketing Digital",
@@ -101,7 +99,7 @@ function Counter({ value, className }: { value: string; className?: string }) {
 }
 
 export function LandingPage() {
-  const [branding, setBranding] = useState<{ agencyName?: string; logoUrl?: string } | null>(null);
+  const [branding, setBranding] = useState<{ agencyName?: string; logoUrl?: string; phone?: string } | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -110,7 +108,7 @@ export function LandingPage() {
       try {
         const response = await fetch(`${apiBaseUrl}/api/settings/branding`, { cache: "no-store" });
         if (!response.ok) return;
-        const payload = (await response.json()) as { agencyName?: string; logoUrl?: string };
+        const payload = (await response.json()) as { agencyName?: string; logoUrl?: string; phone?: string };
         if (mounted) {
           setBranding(payload);
         }
@@ -128,6 +126,7 @@ export function LandingPage() {
 
   const agencyName = branding?.agencyName || "Oumar Business";
   const logoUrl = resolveBrandingLogoUrl(branding?.logoUrl ?? "");
+  const whatsappUrl = buildWhatsAppUrl(branding?.phone ?? "");
 
   return (
     <div className="bg-ink text-white">
@@ -186,8 +185,14 @@ export function LandingPage() {
             </Link>
 
             <a
-              href={whatsappUrl}
+              href={whatsappUrl || "#"}
               className="btn-gold inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold"
+              target={whatsappUrl ? "_blank" : undefined}
+              rel={whatsappUrl ? "noreferrer" : undefined}
+              aria-disabled={!whatsappUrl}
+              onClick={(event) => {
+                if (!whatsappUrl) event.preventDefault();
+              }}
             >
               <MessageCircle className="h-4 w-4" />
               <span className="hidden sm:inline">Parler sur WhatsApp</span>
@@ -230,8 +235,14 @@ export function LandingPage() {
 
               <div className="mt-9 flex flex-col gap-3 sm:flex-row">
                 <a
-                  href={whatsappUrl}
+                  href={whatsappUrl || "#"}
                   className="btn-gold inline-flex items-center justify-center gap-2 rounded-xl px-7 py-4 text-base font-bold"
+                  target={whatsappUrl ? "_blank" : undefined}
+                  rel={whatsappUrl ? "noreferrer" : undefined}
+                  aria-disabled={!whatsappUrl}
+                  onClick={(event) => {
+                    if (!whatsappUrl) event.preventDefault();
+                  }}
                 >
                   Demander un devis gratuit
                   <ArrowRight className="h-5 w-5" />
@@ -362,8 +373,14 @@ export function LandingPage() {
                     ))}
                   </ul>
                   <a
-                    href={whatsappUrl}
+                    href={whatsappUrl || "#"}
                     className="mt-7 inline-flex items-center gap-2 text-sm font-bold text-gold transition hover:gap-3"
+                    target={whatsappUrl ? "_blank" : undefined}
+                    rel={whatsappUrl ? "noreferrer" : undefined}
+                    aria-disabled={!whatsappUrl}
+                    onClick={(event) => {
+                      if (!whatsappUrl) event.preventDefault();
+                    }}
                   >
                     Voir le detail
                     <ArrowRight className="h-4 w-4" />
@@ -435,8 +452,14 @@ export function LandingPage() {
                 Le projet peut etre suivi depuis un seul espace avec WhatsApp, email, CRM, devis, factures et portail client.
               </p>
               <a
-                href={whatsappUrl}
+                href={whatsappUrl || "#"}
                 className="btn-gold mt-8 inline-flex items-center gap-2 rounded-xl px-6 py-3.5 text-base font-bold"
+                target={whatsappUrl ? "_blank" : undefined}
+                rel={whatsappUrl ? "noreferrer" : undefined}
+                aria-disabled={!whatsappUrl}
+                onClick={(event) => {
+                  if (!whatsappUrl) event.preventDefault();
+                }}
               >
                 Demarrer mon projet
                 <ArrowRight className="h-5 w-5" />
@@ -577,8 +600,14 @@ export function LandingPage() {
           <div>
             <p className="text-sm font-bold text-white">Contact</p>
             <a
-              href={whatsappUrl}
+              href={whatsappUrl || "#"}
               className="mt-4 inline-flex items-center gap-2 text-sm text-muted transition hover:text-gold"
+              target={whatsappUrl ? "_blank" : undefined}
+              rel={whatsappUrl ? "noreferrer" : undefined}
+              aria-disabled={!whatsappUrl}
+              onClick={(event) => {
+                if (!whatsappUrl) event.preventDefault();
+              }}
             >
               <MessageCircle className="h-4 w-4" />
               WhatsApp Business
@@ -605,4 +634,10 @@ function resolveBrandingLogoUrl(value: string) {
   }
 
   return value;
+}
+
+function buildWhatsAppUrl(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (!digits) return "";
+  return `https://wa.me/${digits}`;
 }

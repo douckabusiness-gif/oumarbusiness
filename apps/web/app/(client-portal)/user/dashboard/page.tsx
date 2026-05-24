@@ -93,7 +93,7 @@ export default function UserDashboardPage() {
         </div>
 
         {/* ── Accès rapides ── */}
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <QuickAction href="/user/sourcing" icon={Radar} label="Nouveau sourcing" color="gold" primary />
           <QuickAction href="/user/prospects" icon={Target} label="Mes prospects" color="violet" />
           <QuickAction href="/user/history" icon={Clock} label="Historique" color="sky" />

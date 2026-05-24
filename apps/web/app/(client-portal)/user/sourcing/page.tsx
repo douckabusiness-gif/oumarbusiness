@@ -171,7 +171,7 @@ export default function UserSourcingPage() {
               <Bot className="h-3.5 w-3.5" /> Configurer
             </Link>
           </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="mt-4 grid grid-cols-2 gap-3">
             {agents.map((agent) => {
               const isSelected = agent.agentKey === selectedAgentKey;
               const isSerper = agent.agentKey === "sourcing-serper";
