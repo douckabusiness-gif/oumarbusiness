@@ -1,0 +1,625 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  password     String?
+  image        String?
+  role         Role      @default(SALES_AGENT)
+  twoFAEnabled Boolean   @default(false)
+  twoFASecret  String?
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  lastLoginAt  DateTime?
+
+  auditLogs     AuditLog[]
+  assignedWA    WAConversation[] @relation("AssignedWA")
+  assignedEmail EmailThread[]    @relation("AssignedEmail")
+  assignedUnified UnifiedConversation[] @relation("AssignedUnified")
+  messageParticipants MessageParticipant[]
+  unifiedMessages UnifiedMessage[] @relation("UnifiedUserMessages")
+  notes         Note[]
+  tasks         Task[]           @relation("AssignedTasks")
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  SUPERVISOR
+  WHATSAPP_OPERATOR
+  EMAIL_OPERATOR
+  SALES_AGENT
+  MARKETING_AGENT
+  FREELANCER
+  CLIENT
+}
+
+model Client {
+  id          String    @id @default(cuid())
+  name        String
+  company     String?
+  email       String?
+  whatsapp    String?
+  country     String?
+  language    String    @default("fr")
+  source      String?
+  status      String    @default("prospect")
+  tags        String[]
+  totalSpent  Float     @default(0)
+  createdAt   DateTime  @default(now())
+  lastContact DateTime?
+
+  projects        Project[]
+  invoices        Invoice[]
+  waConversations WAConversation[]
+  emailThreads    EmailThread[]
+  unifiedConversations UnifiedConversation[]
+  conversationSessions ConversationSession[]
+  memoryProfile   ClientMemory?
+  knowledgeDocuments KnowledgeDocument[]
+  retrievalLogs   KnowledgeRetrievalLog[]
+  messageParticipants MessageParticipant[]
+  notes           Note[]
+  quotes          Quote[]
+}
+
+model WASession {
+  id          String   @id @default(cuid())
+  name        String
+  type        String
+  phoneNumber String
+  status      String   @default("disconnected")
+  sessionData Json?
+  createdAt   DateTime @default(now())
+
+  conversations WAConversation[]
+}
+
+model WAConversation {
+  id            String    @id @default(cuid())
+  sessionId     String
+  jid           String
+  name          String?
+  phoneNumber   String?
+  unreadCount   Int       @default(0)
+  lastMessage   String?
+  lastMessageAt DateTime?
+  isArchived    Boolean   @default(false)
+  isPinned      Boolean   @default(false)
+  labels        String[]
+  clientId      String?
+  assignedToId  String?
+  createdAt     DateTime  @default(now())
+
+  session    WASession   @relation(fields: [sessionId], references: [id])
+  client     Client?     @relation(fields: [clientId], references: [id])
+  assignedTo User?       @relation("AssignedWA", fields: [assignedToId], references: [id])
+  messages   WAMessage[]
+
+  @@index([sessionId])
+  @@index([clientId])
+}
+
+model WAMessage {
+  id              String   @id @default(cuid())
+  conversationId  String
+  waMessageId     String   @unique
+  fromMe          Boolean
+  type            String
+  content         String?
+  mediaUrl        String?
+  mediaKey        String?
+  filename        String?
+  mimetype        String?
+  fileSize        Int?
+  caption         String?
+  quotedMessageId String?
+  status          String   @default("sent")
+  reactions       Json?
+  isDeleted       Boolean  @default(false)
+  sentByAgent     String?
+  timestamp       DateTime
+  createdAt       DateTime @default(now())
+
+  conversation WAConversation @relation(fields: [conversationId], references: [id])
+
+  @@index([conversationId, timestamp])
+}
+
+model EmailAccount {
+  id        String    @id @default(cuid())
+  name      String
+  email     String    @unique
+  imapHost  String
+  imapPort  Int
+  smtpHost  String
+  smtpPort  Int
+  username  String
+  password  String
+  isActive  Boolean   @default(true)
+  lastSync  DateTime?
+  createdAt DateTime  @default(now())
+
+  threads EmailThread[]
+}
+
+model EmailThread {
+  id            String    @id @default(cuid())
+  accountId     String
+  subject       String
+  participants  String[]
+  labels        String[]
+  isRead        Boolean   @default(false)
+  isArchived    Boolean   @default(false)
+  isStarred     Boolean   @default(false)
+  snoozedUntil  DateTime?
+  clientId      String?
+  assignedToId  String?
+  lastMessageAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  account    EmailAccount   @relation(fields: [accountId], references: [id])
+  client     Client?        @relation(fields: [clientId], references: [id])
+  assignedTo User?          @relation("AssignedEmail", fields: [assignedToId], references: [id])
+  messages   EmailMessage[]
+
+  @@index([accountId, lastMessageAt])
+}
+
+model EmailMessage {
+  id          String   @id @default(cuid())
+  threadId    String
+  messageId   String   @unique
+  fromName    String?
+  fromEmail   String
+  toEmails    String[]
+  ccEmails    String[]
+  subject     String
+  bodyText    String?
+  bodyHtml    String?
+  attachments Json?
+  isFromMe    Boolean
+  sentByAgent String?
+  receivedAt  DateTime
+  createdAt   DateTime @default(now())
+
+  thread EmailThread @relation(fields: [threadId], references: [id])
+}
+
+model UnifiedConversation {
+  id            String   @id @default(cuid())
+  title         String
+  channel       String   @default("internal")
+  status        String   @default("open")
+  priority      String   @default("normal")
+  aiMode        String   @default("assist")
+  aiSummary     String?
+  aiSentiment   String?
+  unreadCount   Int      @default(0)
+  labels        String[]
+  clientId      String?
+  projectId     String?
+  assignedToId  String?
+  lastMessage   String?
+  lastMessageAt DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  client       Client?              @relation(fields: [clientId], references: [id])
+  project      Project?             @relation(fields: [projectId], references: [id])
+  assignedTo   User?                @relation("AssignedUnified", fields: [assignedToId], references: [id])
+  participants MessageParticipant[]
+  messages     UnifiedMessage[]
+
+  @@index([channel, status])
+  @@index([clientId])
+  @@index([projectId])
+  @@index([assignedToId])
+}
+
+model MessageParticipant {
+  id             String   @id @default(cuid())
+  conversationId String
+  type           String
+  displayName    String
+  userId         String?
+  clientId       String?
+  agentType      String?
+  lastReadAt     DateTime?
+  joinedAt       DateTime @default(now())
+
+  conversation UnifiedConversation @relation(fields: [conversationId], references: [id])
+  user         User?               @relation(fields: [userId], references: [id])
+  client       Client?             @relation(fields: [clientId], references: [id])
+
+  @@index([conversationId])
+  @@index([userId])
+  @@index([clientId])
+}
+
+model UnifiedMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  senderType     String
+  senderName     String
+  senderUserId   String?
+  agentType      String?
+  type           String   @default("text")
+  body           String?
+  status         String   @default("sent")
+  aiGenerated    Boolean  @default(false)
+  metadata       Json?
+  createdAt      DateTime @default(now())
+  deliveredAt    DateTime?
+  readAt         DateTime?
+
+  conversation UnifiedConversation  @relation(fields: [conversationId], references: [id])
+  senderUser   User?                @relation("UnifiedUserMessages", fields: [senderUserId], references: [id])
+  attachments  MessageAttachment[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderUserId])
+}
+
+model MessageAttachment {
+  id        String   @id @default(cuid())
+  messageId String
+  name      String
+  fileUrl   String
+  mimeType  String
+  size      Int?
+  createdAt DateTime @default(now())
+
+  message UnifiedMessage @relation(fields: [messageId], references: [id])
+}
+
+model Project {
+  id           String    @id @default(cuid())
+  name         String
+  clientId     String
+  type         String
+  status       String    @default("scoping")
+  brief        String?
+  techStack    String?
+  budget       Float
+  currency     String    @default("XOF")
+  depositPaid  Boolean   @default(false)
+  finalPaid    Boolean   @default(false)
+  startDate    DateTime?
+  deadline     DateTime?
+  completedAt  DateTime?
+  portalAccess Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+
+  client       Client              @relation(fields: [clientId], references: [id])
+  milestones   Milestone[]
+  tasks        Task[]
+  invoices     Invoice[]
+  deliverables Deliverable[]
+  freelancers  ProjectFreelancer[]
+  conversations UnifiedConversation[]
+}
+
+model Milestone {
+  id          String    @id @default(cuid())
+  projectId   String
+  title       String
+  description String?
+  dueDate     DateTime
+  status      String    @default("pending")
+  completedAt DateTime?
+
+  project Project @relation(fields: [projectId], references: [id])
+  tasks   Task[]
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  projectId   String
+  milestoneId String?
+  title       String
+  description String?
+  status      String    @default("todo")
+  priority    String    @default("medium")
+  assignedToId String?
+  dueDate     DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  project    Project    @relation(fields: [projectId], references: [id])
+  milestone  Milestone? @relation(fields: [milestoneId], references: [id])
+  assignedTo User?      @relation("AssignedTasks", fields: [assignedToId], references: [id])
+}
+
+model Invoice {
+  id              String    @id @default(cuid())
+  number          String    @unique
+  clientId        String
+  projectId       String?
+  type            String
+  lineItems       Json
+  subtotal        Float
+  tax             Float     @default(0)
+  total           Float
+  currency        String    @default("XOF")
+  status          String    @default("draft")
+  dueDate         DateTime
+  paymentMethods  Json
+  pdfUrl          String?
+  sentAt          DateTime?
+  viewedAt        DateTime?
+  paidAt          DateTime?
+  paymentRef      String?
+  paymentMethod   String?
+  remindersSent   Int       @default(0)
+  createdAt       DateTime  @default(now())
+
+  client  Client   @relation(fields: [clientId], references: [id])
+  project Project? @relation(fields: [projectId], references: [id])
+}
+
+model Quote {
+  id            String    @id @default(cuid())
+  clientId      String
+  serviceType   String
+  brief         String
+  lineItems     Json
+  total         Float
+  currency      String    @default("XOF")
+  status        String    @default("sent")
+  validUntil    DateTime
+  acceptedAt    DateTime?
+  rejectedAt    DateTime?
+  followUpsSent Int       @default(0)
+  createdAt     DateTime  @default(now())
+
+  client Client @relation(fields: [clientId], references: [id])
+}
+
+model Freelancer {
+  id         String   @id @default(cuid())
+  name       String
+  email      String   @unique
+  whatsapp   String?
+  skills     String[]
+  country    String?
+  hourlyRate Float?
+  rating     Float    @default(0)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  projects ProjectFreelancer[]
+}
+
+model ProjectFreelancer {
+  projectId    String
+  freelancerId String
+  role         String
+  status       String   @default("active")
+  fee          Float?
+  assignedAt   DateTime @default(now())
+
+  project    Project    @relation(fields: [projectId], references: [id])
+  freelancer Freelancer @relation(fields: [freelancerId], references: [id])
+
+  @@id([projectId, freelancerId])
+}
+
+model AgentConfig {
+  id                  String   @id @default(cuid())
+  type                String   @unique
+  name                String
+  systemPrompt        String
+  isActive            Boolean  @default(true)
+  temperature         Float    @default(0.7)
+  maxTokens           Int      @default(1000)
+  escalationThreshold Float    @default(0.3)
+  config              Json?
+  updatedAt           DateTime @updatedAt
+}
+
+model AgentLog {
+  id             String   @id @default(cuid())
+  agentType      String
+  action         String
+  input          String?
+  output         String?
+  clientId       String?
+  conversationId String?
+  escalated      Boolean  @default(false)
+  escalatedTo    String?
+  duration       Int?
+  tokensUsed     Int?
+  error          String?
+  createdAt      DateTime @default(now())
+}
+
+model ConversationSession {
+  id            String   @id @default(cuid())
+  clientId      String?
+  channel       String
+  externalRef   String?
+  title         String?
+  language      String?  @default("fr")
+  status        String   @default("active")
+  lastMessageAt DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  client    Client?                     @relation(fields: [clientId], references: [id])
+  messages  ConversationMemoryMessage[]
+  summaries ConversationSummary[]
+
+  @@index([clientId, channel])
+  @@index([channel, externalRef])
+  @@index([lastMessageAt])
+}
+
+model ConversationMemoryMessage {
+  id         String   @id @default(cuid())
+  sessionId   String
+  role       String
+  agentType  String?
+  content    String
+  messageType String  @default("text")
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  session ConversationSession @relation(fields: [sessionId], references: [id])
+
+  @@index([sessionId, createdAt])
+}
+
+model ConversationSummary {
+  id           String   @id @default(cuid())
+  sessionId     String
+  summary      String
+  rangeStartAt DateTime
+  rangeEndAt   DateTime
+  createdAt    DateTime @default(now())
+
+  session ConversationSession @relation(fields: [sessionId], references: [id])
+
+  @@index([sessionId, createdAt])
+}
+
+model ClientMemory {
+  id             String   @id @default(cuid())
+  clientId       String   @unique
+  profileSummary String?
+  lastUpdatedAt  DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  client      Client             @relation(fields: [clientId], references: [id])
+  facts       ClientMemoryFact[]
+  preferences ClientPreference[]
+}
+
+model ClientMemoryFact {
+  id         String   @id @default(cuid())
+  memoryId    String
+  category   String
+  fact       String
+  confidence Float    @default(0.7)
+  source     String?
+  createdAt  DateTime @default(now())
+
+  memory ClientMemory @relation(fields: [memoryId], references: [id])
+
+  @@index([memoryId, category])
+}
+
+model ClientPreference {
+  id        String   @id @default(cuid())
+  memoryId   String
+  key       String
+  value     String
+  createdAt DateTime @default(now())
+
+  memory ClientMemory @relation(fields: [memoryId], references: [id])
+
+  @@index([memoryId, key])
+}
+
+model KnowledgeDocument {
+  id         String   @id @default(cuid())
+  title      String
+  type       String
+  scope      String
+  clientId   String?
+  source     String
+  sourceUrl  String?
+  rawText    String?
+  status     String   @default("processing")
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  client Client?           @relation(fields: [clientId], references: [id])
+  chunks KnowledgeChunk[]
+
+  @@index([scope, type])
+  @@index([clientId])
+}
+
+model KnowledgeChunk {
+  id         String   @id @default(cuid())
+  documentId  String
+  chunkIndex Int
+  content    String
+  metadata   Json?
+  embedding  Json?
+  createdAt  DateTime @default(now())
+
+  document KnowledgeDocument @relation(fields: [documentId], references: [id])
+
+  @@index([documentId, chunkIndex])
+}
+
+model KnowledgeRetrievalLog {
+  id        String   @id @default(cuid())
+  clientId  String?
+  agentType String
+  query     String
+  chunkIds  String[]
+  createdAt DateTime @default(now())
+
+  client Client? @relation(fields: [clientId], references: [id])
+
+  @@index([clientId, createdAt])
+  @@index([agentType, createdAt])
+}
+
+model AppSetting {
+  key       String   @id
+  value     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  action     String
+  resource   String
+  resourceId String?
+  details    Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Note {
+  id        String   @id @default(cuid())
+  clientId  String?
+  content   String
+  authorId  String
+  createdAt DateTime @default(now())
+
+  client Client? @relation(fields: [clientId], references: [id])
+  author User    @relation(fields: [authorId], references: [id])
+}
+
+model Deliverable {
+  id         String    @id @default(cuid())
+  projectId  String
+  name       String
+  fileUrl    String
+  type       String
+  version    Int       @default(1)
+  status     String    @default("pending_review")
+  approvedAt DateTime?
+  feedback   String?
+  uploadedAt DateTime  @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+}

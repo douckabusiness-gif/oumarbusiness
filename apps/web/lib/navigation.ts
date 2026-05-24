@@ -1,0 +1,40 @@
+import {
+  BarChart3,
+  Bot,
+  BriefcaseBusiness,
+  CreditCard,
+  DatabaseZap,
+  Facebook,
+  FileText,
+  FolderKanban,
+  Inbox,
+  LayoutDashboard,
+  Mail,
+  MessageCircle,
+  Radar,
+  Search,
+  Settings,
+  Store,
+  Users
+} from "lucide-react";
+
+export const dashboardNavigation = [
+  { href: "/overview", label: "Vue globale", icon: LayoutDashboard },
+  { href: "/messaging", label: "Messagerie", icon: Inbox },
+  { href: "/whatsapp", label: "WhatsApp", icon: MessageCircle },
+  { href: "/email", label: "Email", icon: Mail },
+  { href: "/crm", label: "CRM", icon: Users },
+  { href: "/quotes", label: "Devis", icon: FileText },
+  { href: "/knowledge", label: "Knowledge", icon: DatabaseZap },
+  { href: "/projects", label: "Projets", icon: FolderKanban },
+  { href: "/market", label: "Market", icon: Store },
+  { href: "/agents", label: "Agents IA", icon: Bot },
+  { href: "/business/sourcing", label: "Sourcing", icon: Radar },
+  { href: "/marketing/facebook", label: "Facebook Ads", icon: Facebook },
+  { href: "/marketing/google", label: "Google Ads", icon: Search },
+  { href: "/billing", label: "Facturation", icon: CreditCard },
+  { href: "/freelancers", label: "Freelances", icon: BriefcaseBusiness },
+  { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/settings", label: "Parametres", icon: Settings },
+  { href: "/client/dashboard", label: "Portail client", icon: Inbox }
+] as const;

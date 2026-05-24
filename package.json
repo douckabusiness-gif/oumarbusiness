@@ -1,0 +1,35 @@
+{
+  "name": "oumar-agency",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Oumar Business autonomous digital agency platform",
+  "packageManager": "npm@10.8.2",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md,css,prisma}\"",
+    "db:generate": "npm --workspace @oumar/api run db:generate",
+    "db:migrate": "npm --workspace @oumar/api run db:migrate",
+    "prod:config": "docker compose -f docker-compose.prod.yml --env-file .env.production.example config --quiet",
+    "prod:build": "docker compose -f docker-compose.prod.yml build api web",
+    "prod:up": "docker compose -f docker-compose.prod.yml up -d api web",
+    "prod:health": "powershell -Command \"Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4000/health | Select-Object -ExpandProperty Content\""
+  },
+  "overrides": {
+    "postcss": "^8.5.10",
+    "next": {
+      "postcss": "^8.5.10"
+    }
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "turbo": "^2.0.14",
+    "typescript": "^5.5.4"
+  }
+}

@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build-and-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build API
+        run: npm --workspace @oumar/api run build
+
+      - name: Typecheck Web
+        run: npx tsc --noEmit --pretty false
+        working-directory: apps/web
+
+      - name: Build Web
+        run: npm --workspace @oumar/web run build
+
+      - name: Validate local Docker config
+        run: docker compose config --quiet
+
+      - name: Validate production Docker config
+        run: docker compose -f docker-compose.prod.yml --env-file .env.production.example config --quiet
