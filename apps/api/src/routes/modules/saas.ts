@@ -7,7 +7,7 @@ import { WhatsAppBaileysClient, baileysManager, type SessionSummary } from "@oum
 import { prisma } from "../../db/prisma.js";
 import { extractPageContent, getSearchProviderStatus, searchSerper, searchTavily } from "../../services/searchIntelligence.js";
 import { EmailEngine } from "@oumar/email-engine";
-import { getChatProviderConfig, getRuntimeEmailAccount } from "./settings.js";
+import { getRuntimeEmailAccount } from "./settings.js";
 import { resolveAuthenticatedAdmin } from "./admin-auth.js";
 import { createRateLimiter, secureCookieEnabled } from "../../services/httpSecurity.js";
 
@@ -578,8 +578,10 @@ function parseAgentProfile(value: unknown): SaasAgentProfile | null {
   const displayName = typeof value.displayName === "string" ? value.displayName : "";
   const isEnabled = typeof value.isEnabled === "boolean" ? value.isEnabled : true;
   const tone = typeof value.tone === "string" ? value.tone : "";
-  const modelProvider = typeof value.modelProvider === "string" && value.modelProvider ? value.modelProvider : "openai";
-  const modelId = typeof value.modelId === "string" ? value.modelId : "";
+  const rawModelProvider = typeof value.modelProvider === "string" ? value.modelProvider.trim() : "";
+  const hasStoredModelProvider = rawModelProvider.length > 0;
+  const modelProvider = hasStoredModelProvider ? rawModelProvider : "openai";
+  const modelId = hasStoredModelProvider && typeof value.modelId === "string" ? value.modelId : "";
   const systemPrompt = typeof value.systemPrompt === "string" ? value.systemPrompt : "";
   const personality = typeof value.personality === "string" ? value.personality : "";
   const identity = typeof value.identity === "string" ? value.identity : "";
@@ -1124,18 +1126,19 @@ function parseSourcingGlobalAgent(value: unknown): SourcingGlobalAgent | null {
         : "Agent Qualification";
   const isEnabled = typeof value.isEnabled === "boolean" ? value.isEnabled : true;
   const source: "serper" | "tavily" = agentKey === "sourcing-serper" ? "serper" : "tavily";
-  const modelProvider =
-    typeof value.modelProvider === "string" && value.modelProvider.trim()
-      ? value.modelProvider.trim()
-      : agentKey === "sourcing-serper"
-        ? "openai"
-        : "claude";
+  const rawModelProvider = typeof value.modelProvider === "string" ? value.modelProvider.trim() : "";
+  const hasStoredModelProvider = rawModelProvider.length > 0;
+  const modelProvider = hasStoredModelProvider
+    ? rawModelProvider
+    : agentKey === "sourcing-serper"
+      ? "openai"
+      : "claude";
   const defaultKeywords = typeof value.defaultKeywords === "string" ? value.defaultKeywords : "";
   const qualificationInstructions = typeof value.qualificationInstructions === "string" ? value.qualificationInstructions : "";
   const defaultSector = typeof value.defaultSector === "string" ? value.defaultSector : "";
   const defaultZone = typeof value.defaultZone === "string" ? value.defaultZone : "";
   const defaultTargetCount = typeof value.defaultTargetCount === "number" ? value.defaultTargetCount : 20;
-  const modelId = typeof value.modelId === "string" && value.modelId ? value.modelId : "";
+  const modelId = hasStoredModelProvider && typeof value.modelId === "string" && value.modelId ? value.modelId : "";
   const systemPrompt =
     typeof value.systemPrompt === "string" && value.systemPrompt
       ? value.systemPrompt
@@ -1187,18 +1190,6 @@ function parseSourcingGlobalAgent(value: unknown): SourcingGlobalAgent | null {
   };
 }
 
-async function resolveSourcingModelSelection(
-  providerId: string,
-  requestedModel: string,
-  fallbackModel: string
-) {
-  const provider = await getChatProviderConfig(providerId, requestedModel || fallbackModel);
-  return {
-    modelProvider: providerId,
-    modelId: requestedModel || provider?.model || fallbackModel
-  };
-}
-
 const loadSourcingPlans = () => loadStoredArray(SAAS_SOURCING_PLANS_KEY, parseSourcingPlan);
 const saveSourcingPlans = (items: SourcingPlan[]) => saveStoredArray(SAAS_SOURCING_PLANS_KEY, items);
 const loadGlobalAgentsRaw = () => loadStoredArray(SAAS_GLOBAL_AGENTS_KEY, parseSourcingGlobalAgent);
@@ -1207,18 +1198,14 @@ const saveGlobalAgents = (items: SourcingGlobalAgent[]) => saveStoredArray(SAAS_
 async function getGlobalAgents(): Promise<SourcingGlobalAgent[]> {
   const stored = await loadGlobalAgentsRaw();
   const now = new Date().toISOString();
-  const [serperModel, tavilyModel] = await Promise.all([
-    resolveSourcingModelSelection("openai", "", "gpt-4o-mini"),
-    resolveSourcingModelSelection("claude", "", "claude-sonnet-4-20250514")
-  ]);
   const defaults: SourcingGlobalAgent[] = [
     {
       agentKey: "sourcing-serper",
       displayName: "Agent Découverte",
       isEnabled: true,
       source: "serper",
-      modelProvider: serperModel.modelProvider,
-      modelId: serperModel.modelId,
+      modelProvider: "openai",
+      modelId: "",
       defaultKeywords: "",
       qualificationInstructions: "",
       defaultSector: "",
@@ -1236,8 +1223,8 @@ async function getGlobalAgents(): Promise<SourcingGlobalAgent[]> {
       displayName: "Agent Qualification",
       isEnabled: true,
       source: "tavily",
-      modelProvider: tavilyModel.modelProvider,
-      modelId: tavilyModel.modelId,
+      modelProvider: "claude",
+      modelId: "",
       defaultKeywords: "",
       qualificationInstructions: "",
       defaultSector: "",

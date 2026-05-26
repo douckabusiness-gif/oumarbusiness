@@ -1231,9 +1231,8 @@ function GlobalAgentsTab({ apiSettingsVersion }: { apiSettingsVersion: number })
                         value={selectedProviderId}
                         onChange={(e) => {
                           const nextProviderId = e.target.value;
-                          const nextProvider = chatProviders.find((provider) => provider.id === nextProviderId) ?? null;
                           updateForm(agent.agentKey, "modelProvider", nextProviderId);
-                          updateForm(agent.agentKey, "modelId", nextProvider?.defaultModel ?? "");
+                          updateForm(agent.agentKey, "modelId", "");
                         }}
                         className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 focus:border-gold/40 focus:outline-none"
                       >
@@ -1248,10 +1247,13 @@ function GlobalAgentsTab({ apiSettingsVersion }: { apiSettingsVersion: number })
                     <div>
                       <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Modele IA</label>
                       <select
-                        value={String(form.modelId ?? agent.modelId ?? selectedProvider?.defaultModel ?? "")}
+                        value={String(form.modelId ?? agent.modelId ?? "")}
                         onChange={(e) => updateForm(agent.agentKey, "modelId", e.target.value)}
                         className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 focus:border-gold/40 focus:outline-none"
                       >
+                        <option value="">
+                          {selectedProvider ? "Choisir un modele" : "Choisir d'abord un fournisseur"}
+                        </option>
                         {availableModels.map((model) => (
                           <option key={model} value={model}>
                             {model}
@@ -1414,7 +1416,7 @@ function GlobalAgentsTab({ apiSettingsVersion }: { apiSettingsVersion: number })
                   <p>
                     <span className="text-zinc-400">Modele IA:</span>{" "}
                     <span className="rounded-full bg-gold/10 px-2 py-0.5 text-xs font-semibold text-gold">
-                      {agent.modelId || "-"}
+                      {agent.modelId || "Aucun modele choisi"}
                     </span>
                   </p>
                   <p><span className="text-zinc-400">Source interne:</span> {isSerper ? "Serper" : "Tavily"}</p>
