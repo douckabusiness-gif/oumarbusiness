@@ -83,14 +83,78 @@ type OverviewPayload = {
   recentRuns: RecentRun[];
 };
 
+type ApiProviderConfig = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  defaultModel: string;
+  enabled: boolean;
+  budget: string;
+  models: string[];
+  apiKeyConfigured: boolean;
+  apiKeySource: "database" | "env" | "none";
+  apiKey?: string;
+  clearApiKey?: boolean;
+  isReplacingKey?: boolean;
+  status?: "idle" | "loading" | "ok" | "error";
+  message?: string;
+  modelStatus?: "idle" | "loading" | "ok" | "error";
+  modelMessage?: string;
+  chatStatus?: "idle" | "loading" | "ok" | "error";
+  chatMessage?: string;
+};
+
+type ApiSettingsTabKey = "providers" | "search";
+
+const SEARCH_PROVIDER_IDS = new Set(["serper", "tavily"]);
+const CHAT_PROVIDER_IDS = new Set(["groq", "openai", "claude", "gemini", "glm", "kimi-k2", "qwen", "nvidia-nim"]);
+
+function normalizeProvider(provider: ApiProviderConfig): ApiProviderConfig {
+  return {
+    ...provider,
+    apiKey: "",
+    clearApiKey: false,
+    isReplacingKey: false,
+    status: "idle",
+    message: undefined,
+    modelStatus: "idle",
+    modelMessage: provider.models?.length ? `${provider.models.length} modele(s) disponible(s)` : undefined,
+    chatStatus: "idle",
+    chatMessage: undefined
+  };
+}
+
+function toProviderPayload(provider: ApiProviderConfig) {
+  const typedApiKey = provider.apiKey?.trim();
+  return {
+    id: provider.id,
+    baseUrl: provider.baseUrl,
+    defaultModel: provider.defaultModel,
+    enabled: provider.enabled,
+    budget: provider.budget,
+    models: provider.models,
+    ...(typedApiKey ? { apiKey: typedApiKey } : {}),
+    ...(provider.clearApiKey ? { clearApiKey: true } : {})
+  };
+}
+
+function isChatProvider(provider: ApiProviderConfig) {
+  return CHAT_PROVIDER_IDS.has(provider.id);
+}
+
+function isSearchProvider(provider: ApiProviderConfig) {
+  return SEARCH_PROVIDER_IDS.has(provider.id);
+}
+
 // ─── Onglets ───────────────────────────────────────────────────────────────
 
-type Tab = "overview" | "plans" | "agents" | "subscribers" | "analytics" | "payments";
+type Tab = "overview" | "plans" | "agents" | "api-settings" | "subscribers" | "analytics" | "payments";
 
 const TABS: { key: Tab; label: string; icon: typeof Radar }[] = [
   { key: "overview", label: "Vue d'ensemble", icon: TrendingUp },
   { key: "plans", label: "Plans & Tarifs", icon: Zap },
   { key: "agents", label: "Agents Globaux", icon: Radar },
+  { key: "api-settings", label: "Parametres API", icon: Search },
   { key: "subscribers", label: "Abonnes", icon: Users },
   { key: "analytics", label: "Analytics", icon: BarChart2 },
   { key: "payments", label: "Paiements", icon: CreditCard }
@@ -101,6 +165,7 @@ const TABS: { key: Tab; label: string; icon: typeof Radar }[] = [
 export default function SourcingBusinessPage() {
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [pendingPaymentsCount, setPendingPaymentsCount] = useState(0);
+  const [apiSettingsVersion, setApiSettingsVersion] = useState(0);
 
   useEffect(() => {
     fetch(`${apiBaseUrl}/api/sourcing/admin/payments/requests`, { cache: "no-store", credentials: "include" })
@@ -130,17 +195,18 @@ export default function SourcingBusinessPage() {
               Sourcing Commercial
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
-              Monetise tes agents Serper + Tavily. Cree des plans d'acces, pilote les agents globaux et suis tes abonnes
-              depuis une seule page — sans toucher au reste de ton systeme.
+              Pilote ton produit sourcing comme un espace separe de ton projet personnel. Regle les agents globaux, les
+              plans, les abonnes et les API depuis cette zone dediee.
             </p>
           </div>
-          <Link
-            href="/settings/search-intelligence"
+          <button
+            type="button"
+            onClick={() => setActiveTab("api-settings")}
             className="inline-flex h-11 shrink-0 items-center gap-2 rounded-2xl border border-line bg-ink px-4 text-sm font-semibold text-zinc-200 transition hover:border-gold/40 hover:text-gold"
           >
             <Search className="h-4 w-4" />
-            Config Serper / Tavily
-          </Link>
+            Parametres API
+          </button>
         </div>
 
         {/* Barre d'onglets */}
@@ -176,7 +242,8 @@ export default function SourcingBusinessPage() {
       {/* Contenu de l'onglet actif */}
       {activeTab === "overview" && <OverviewTab />}
       {activeTab === "plans" && <PlansTab />}
-      {activeTab === "agents" && <GlobalAgentsTab />}
+      {activeTab === "agents" && <GlobalAgentsTab apiSettingsVersion={apiSettingsVersion} />}
+      {activeTab === "api-settings" && <ApiSettingsTab onSaved={() => setApiSettingsVersion((value) => value + 1)} />}
       {activeTab === "subscribers" && <SubscribersTab />}
       {activeTab === "analytics" && <AnalyticsTab />}
       {activeTab === "payments" && <PaymentsTab />}
@@ -710,31 +777,269 @@ function PlansTab() {
   );
 }
 
-// ─── Modèles IA disponibles pour les agents sourcing ──────────────────────
+// ─── Onglet Parametres API ────────────────────────────────────────────────
 
-const SOURCING_MODELS = [
-  { id: "gpt-4o-mini", label: "GPT-4o mini", badge: "Rapide" },
-  { id: "gpt-4o", label: "GPT-4o", badge: "Puissant" },
-  { id: "gemini-1.5-flash", label: "Gemini 1.5 Flash", badge: "Rapide" },
-  { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro", badge: "Premium" },
-  { id: "claude-3-5-haiku", label: "Claude 3.5 Haiku", badge: "Rapide" },
-  { id: "claude-3-5-sonnet", label: "Claude 3.5 Sonnet", badge: "Premium" }
-] as const;
+function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
+  const [providers, setProviders] = useState<ApiProviderConfig[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [activeSubTab, setActiveSubTab] = useState<ApiSettingsTabKey>("providers");
+
+  useEffect(() => {
+    void loadProviders();
+  }, []);
+
+  async function loadProviders() {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/settings/ai-providers`, {
+        cache: "no-store",
+        credentials: "include"
+      });
+      const data = (await response.json()) as { providers?: ApiProviderConfig[]; error?: string };
+      if (!response.ok) throw new Error(data.error ?? "Chargement impossible");
+      setProviders((data.providers ?? []).map(normalizeProvider));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Chargement impossible");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function updateProvider(id: string, patch: Partial<ApiProviderConfig>) {
+    setProviders((current) => current.map((provider) => (provider.id === id ? { ...provider, ...patch } : provider)));
+  }
+
+  async function fetchModels(provider: ApiProviderConfig) {
+    updateProvider(provider.id, {
+      modelStatus: "loading",
+      modelMessage: "Verification de la cle et recuperation des modeles..."
+    });
+    try {
+      const typedApiKey = provider.apiKey?.trim();
+      const response = await fetch(`${apiBaseUrl}/api/settings/ai-providers/${provider.id}/models`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          ...(typedApiKey ? { apiKey: typedApiKey } : {}),
+          baseUrl: provider.baseUrl
+        })
+      });
+      const data = (await response.json()) as { ok?: boolean; models?: string[]; error?: string };
+      if (!response.ok || !data.ok) throw new Error(data.error ?? "Modeles indisponibles");
+      const models = data.models?.length ? data.models : provider.models;
+      updateProvider(provider.id, {
+        models,
+        defaultModel: models.includes(provider.defaultModel) ? provider.defaultModel : models[0] ?? provider.defaultModel,
+        apiKey: "",
+        apiKeyConfigured: provider.apiKeyConfigured || Boolean(typedApiKey),
+        apiKeySource: typedApiKey ? "database" : provider.apiKeySource,
+        clearApiKey: false,
+        isReplacingKey: false,
+        modelStatus: "ok",
+        modelMessage: `${models.length} modele(s) recupere(s)`
+      });
+    } catch (caught) {
+      updateProvider(provider.id, {
+        modelStatus: "error",
+        modelMessage: caught instanceof Error ? caught.message : "Modeles indisponibles"
+      });
+    }
+  }
+
+  async function saveProviders() {
+    setSaving(true);
+    setSaved(false);
+    setError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/settings/ai-providers`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ providers: providers.map(toProviderPayload) })
+      });
+      const data = (await response.json()) as { ok?: boolean; providers?: ApiProviderConfig[]; error?: string };
+      if (!response.ok || !data.ok) throw new Error(data.error ?? "Sauvegarde impossible");
+      setProviders((data.providers ?? providers).map(normalizeProvider));
+      setSaved(true);
+      onSaved();
+      setTimeout(() => setSaved(false), 3000);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Sauvegarde impossible");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const providerItems = providers.filter(isChatProvider);
+  const searchItems = providers.filter(isSearchProvider);
+
+  if (loading) return <LoadingBox />;
+
+  return (
+    <div className="space-y-5">
+      {error ? <ErrorBanner message={error} onClose={() => setError(null)} /> : null}
+
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div>
+          <p className="font-semibold text-zinc-100">Parametres API du produit sourcing</p>
+          <p className="mt-1 text-sm text-zinc-500">
+            Cette zone appartient au produit Sourcing Business. Elle te permet de choisir tes fournisseurs IA,
+            recuperer leurs modeles et brancher Serper / Tavily sans passer par tes reglages personnels.
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {saved ? (
+            <span className="flex items-center gap-1 text-sm text-emerald-300">
+              <CheckCircle2 className="h-4 w-4" />
+              Enregistre
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void saveProviders()}
+            disabled={saving}
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-gold px-5 text-sm font-bold text-black disabled:opacity-60"
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            Enregistrer
+          </button>
+        </div>
+      </div>
+
+      <div className="inline-flex rounded-2xl border border-line bg-ink p-1">
+        {([
+          { key: "providers", label: "Fournisseurs IA" },
+          { key: "search", label: "API Serper & Tavily" }
+        ] as const).map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveSubTab(tab.key)}
+            className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+              activeSubTab === tab.key ? "bg-gold text-black" : "text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid gap-4">
+        {(activeSubTab === "providers" ? providerItems : searchItems).map((provider) => {
+          const isSearch = isSearchProvider(provider);
+          return (
+            <section key={provider.id} className="rounded-3xl border border-line bg-panel p-5">
+              <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-semibold text-zinc-100">{provider.name}</p>
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                        provider.enabled ? "bg-emerald-500/15 text-emerald-300" : "bg-zinc-500/15 text-zinc-400"
+                      }`}
+                    >
+                      {provider.enabled ? "Actif" : "Desactive"}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    {isSearch
+                      ? "Cle et endpoint dedies au moteur de recherche web du produit sourcing."
+                      : "Cle fournisseur IA dediee au cerveau de tes agents sourcing."}
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 text-sm text-zinc-300">
+                  Actif
+                  <input
+                    type="checkbox"
+                    checked={provider.enabled}
+                    onChange={(event) => updateProvider(provider.id, { enabled: event.target.checked })}
+                    className="h-4 w-4 accent-gold"
+                  />
+                </label>
+              </div>
+
+              <div className={`grid gap-4 ${isSearch ? "xl:grid-cols-[1.35fr_1fr_180px]" : "xl:grid-cols-[1.1fr_1.1fr_1fr_180px]"}`}>
+                <label className="grid gap-2 text-sm">
+                  <span className="text-zinc-300">Cle API</span>
+                  <input
+                    type="password"
+                    value={provider.apiKey ?? ""}
+                    placeholder={provider.apiKeyConfigured ? "Cle deja configuree" : "Colle la cle API"}
+                    onChange={(event) => updateProvider(provider.id, { apiKey: event.target.value, clearApiKey: false })}
+                    className="h-11 rounded-xl border border-line bg-ink px-3 text-zinc-100 outline-none focus:border-gold/60"
+                  />
+                </label>
+                <label className="grid gap-2 text-sm">
+                  <span className="text-zinc-300">Base URL</span>
+                  <input
+                    type="text"
+                    value={provider.baseUrl}
+                    onChange={(event) => updateProvider(provider.id, { baseUrl: event.target.value })}
+                    className="h-11 rounded-xl border border-line bg-ink px-3 text-zinc-100 outline-none focus:border-gold/60"
+                  />
+                </label>
+                {!isSearch ? (
+                  <label className="grid gap-2 text-sm">
+                    <span className="text-zinc-300">Modele par defaut</span>
+                    <select
+                      value={provider.defaultModel}
+                      onChange={(event) => updateProvider(provider.id, { defaultModel: event.target.value })}
+                      className="h-11 rounded-xl border border-line bg-ink px-3 text-zinc-100 outline-none focus:border-gold/60"
+                    >
+                      {(provider.models?.length ? provider.models : [provider.defaultModel]).map((model) => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                <div className="flex items-end">
+                  <button
+                    type="button"
+                    onClick={() => void fetchModels(provider)}
+                    disabled={provider.modelStatus === "loading"}
+                    className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-line bg-ink px-4 text-sm font-semibold text-zinc-200 hover:border-gold/40 disabled:opacity-60"
+                  >
+                    {provider.modelStatus === "loading" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                    {isSearch ? "Verifier l'API" : "Recuperer les modeles"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                <span>Source cle: {provider.apiKeySource}</span>
+                {provider.modelMessage ? <span className="rounded-full border border-line px-2 py-1">{provider.modelMessage}</span> : null}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 // ─── Onglet Agents Globaux ─────────────────────────────────────────────────
 
-function GlobalAgentsTab() {
+function GlobalAgentsTab({ apiSettingsVersion }: { apiSettingsVersion: number }) {
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [agents, setAgents] = useState<SourcingGlobalAgent[]>([]);
+  const [providers, setProviders] = useState<ApiProviderConfig[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
   const [forms, setForms] = useState<Record<string, Partial<SourcingGlobalAgent>>>({});
   const [editorSections, setEditorSections] = useState<Record<string, "mission" | "brain">>({});
 
   useEffect(() => {
     void loadAgents();
-  }, []);
+    void loadProviders();
+  }, [apiSettingsVersion]);
 
   async function loadAgents() {
     try {
@@ -746,6 +1051,21 @@ function GlobalAgentsTab() {
       setError("Impossible de charger les agents globaux.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadProviders() {
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/settings/ai-providers`, {
+        cache: "no-store",
+        credentials: "include"
+      });
+      const data = (await response.json()) as { providers?: ApiProviderConfig[] };
+      if (response.ok) {
+        setProviders((data.providers ?? []).map(normalizeProvider));
+      }
+    } catch {
+      // On garde une UX souple ici ; le bloc Parametres API reste la zone de diagnostic detaillee.
     }
   }
 
@@ -817,6 +1137,8 @@ function GlobalAgentsTab() {
 
   if (loading) return <LoadingBox />;
 
+  const chatProviders = providers.filter(isChatProvider);
+
   return (
     <div className="space-y-5">
       {error ? <ErrorBanner message={error} onClose={() => setError("")} /> : null}
@@ -839,6 +1161,19 @@ function GlobalAgentsTab() {
           const toolsValue = Array.isArray(form.allowedTools) ? form.allowedTools.join(", ") : "";
           const productName = agent.agentKey === "sourcing-serper" ? "Agent Découverte" : "Agent Qualification";
           const productSubtitle = isSerper ? "Template produit — découverte rapide" : "Template produit — qualification approfondie";
+          const selectedProviderId = String(form.modelProvider ?? agent.modelProvider ?? (isSerper ? "openai" : "claude"));
+          const selectedProvider =
+            chatProviders.find((provider) => provider.id === selectedProviderId) ??
+            chatProviders[0] ??
+            null;
+          const availableModels =
+            selectedProvider?.models?.length
+              ? selectedProvider.models
+              : selectedProvider?.defaultModel
+                ? [selectedProvider.defaultModel]
+                : String(form.modelId ?? agent.modelId ?? "").trim()
+                  ? [String(form.modelId ?? agent.modelId)]
+                  : [];
 
           return (
             <article
@@ -900,18 +1235,44 @@ function GlobalAgentsTab() {
                       className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 focus:border-gold/40 focus:outline-none"
                     />
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Modele IA</label>
-                    <select
-                      value={String(form.modelId ?? (isSerper ? "gpt-4o-mini" : "claude-3-5-sonnet"))}
-                      onChange={(e) => updateForm(agent.agentKey, "modelId", e.target.value)}
-                      className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 focus:border-gold/40 focus:outline-none"
-                    >
-                      {SOURCING_MODELS.map((m) => (
-                        <option key={m.id} value={m.id}>{m.label} — {m.badge}</option>
-                      ))}
-                    </select>
-                    <p className="mt-1 text-xs text-zinc-600">Modele applique a tous les abonnes de cet agent.</p>
+                  <div className="grid gap-4 xl:grid-cols-2">
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Fournisseur IA</label>
+                      <select
+                        value={selectedProviderId}
+                        onChange={(e) => {
+                          const nextProviderId = e.target.value;
+                          const nextProvider = chatProviders.find((provider) => provider.id === nextProviderId) ?? null;
+                          updateForm(agent.agentKey, "modelProvider", nextProviderId);
+                          updateForm(agent.agentKey, "modelId", nextProvider?.defaultModel ?? "");
+                        }}
+                        className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 focus:border-gold/40 focus:outline-none"
+                      >
+                        {chatProviders.map((provider) => (
+                          <option key={provider.id} value={provider.id}>
+                            {provider.name}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="mt-1 text-xs text-zinc-600">Choisi d'abord le fournisseur branche a ta cle API.</p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Modele IA</label>
+                      <select
+                        value={String(form.modelId ?? agent.modelId ?? selectedProvider?.defaultModel ?? "")}
+                        onChange={(e) => updateForm(agent.agentKey, "modelId", e.target.value)}
+                        className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 focus:border-gold/40 focus:outline-none"
+                      >
+                        {availableModels.map((model) => (
+                          <option key={model} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="mt-1 text-xs text-zinc-600">
+                        Les modeles viennent du fournisseur choisi dans Parametres API.
+                      </p>
+                    </div>
                   </div>
                   {editorSection === "mission" ? (
                     <>
@@ -1056,9 +1417,15 @@ function GlobalAgentsTab() {
               ) : (
                 <div className="mt-5 space-y-2 text-sm text-zinc-500">
                   <p>
+                    <span className="text-zinc-400">Fournisseur IA:</span>{" "}
+                    <span className="rounded-full bg-white/5 px-2 py-0.5 text-xs font-semibold text-zinc-200">
+                      {chatProviders.find((provider) => provider.id === agent.modelProvider)?.name ?? agent.modelProvider}
+                    </span>
+                  </p>
+                  <p>
                     <span className="text-zinc-400">Modele IA:</span>{" "}
                     <span className="rounded-full bg-gold/10 px-2 py-0.5 text-xs font-semibold text-gold">
-                      {SOURCING_MODELS.find((m) => m.id === agent.modelId)?.label ?? agent.modelId ?? (isSerper ? "GPT-4o mini" : "Claude 3.5 Sonnet")}
+                      {agent.modelId || "-"}
                     </span>
                   </p>
                   <p><span className="text-zinc-400">Source interne:</span> {isSerper ? "Serper" : "Tavily"}</p>

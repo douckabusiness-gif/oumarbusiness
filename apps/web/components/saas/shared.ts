@@ -90,6 +90,7 @@ export type SaasAgentProfile = {
   displayName: string;
   isEnabled: boolean;
   tone: string;
+  modelProvider?: string;
   modelId: string;
   systemPrompt: string;
   personality: string;
@@ -343,6 +344,7 @@ export type SourcingGlobalAgent = {
   displayName: string;
   isEnabled: boolean;
   source: "serper" | "tavily";
+  modelProvider: string;
   modelId: string;
   defaultKeywords: string;
   qualificationInstructions: string;

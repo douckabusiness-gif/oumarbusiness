@@ -7,7 +7,7 @@ import { WhatsAppBaileysClient, baileysManager, type SessionSummary } from "@oum
 import { prisma } from "../../db/prisma.js";
 import { extractPageContent, getSearchProviderStatus, searchSerper, searchTavily } from "../../services/searchIntelligence.js";
 import { EmailEngine } from "@oumar/email-engine";
-import { getRuntimeEmailAccount } from "./settings.js";
+import { getChatProviderConfig, getRuntimeEmailAccount } from "./settings.js";
 import { resolveAuthenticatedAdmin } from "./admin-auth.js";
 import { createRateLimiter, secureCookieEnabled } from "../../services/httpSecurity.js";
 
@@ -145,6 +145,7 @@ type SaasAgentProfile = {
   displayName: string;
   isEnabled: boolean;
   tone: string;
+  modelProvider: string;
   modelId: string;
   systemPrompt: string;
   personality: string;
@@ -347,6 +348,7 @@ type SourcingGlobalAgent = {
   displayName: string;
   isEnabled: boolean;
   source: "serper" | "tavily";
+  modelProvider: string;
   modelId: string;
   defaultKeywords: string;
   qualificationInstructions: string;
@@ -576,7 +578,8 @@ function parseAgentProfile(value: unknown): SaasAgentProfile | null {
   const displayName = typeof value.displayName === "string" ? value.displayName : "";
   const isEnabled = typeof value.isEnabled === "boolean" ? value.isEnabled : true;
   const tone = typeof value.tone === "string" ? value.tone : "";
-  const modelId = typeof value.modelId === "string" ? value.modelId : "gpt-4o-mini";
+  const modelProvider = typeof value.modelProvider === "string" && value.modelProvider ? value.modelProvider : "openai";
+  const modelId = typeof value.modelId === "string" ? value.modelId : "";
   const systemPrompt = typeof value.systemPrompt === "string" ? value.systemPrompt : "";
   const personality = typeof value.personality === "string" ? value.personality : "";
   const identity = typeof value.identity === "string" ? value.identity : "";
@@ -623,6 +626,7 @@ function parseAgentProfile(value: unknown): SaasAgentProfile | null {
     displayName,
     isEnabled,
     tone,
+    modelProvider,
     modelId,
     systemPrompt,
     personality,
@@ -1120,12 +1124,18 @@ function parseSourcingGlobalAgent(value: unknown): SourcingGlobalAgent | null {
         : "Agent Qualification";
   const isEnabled = typeof value.isEnabled === "boolean" ? value.isEnabled : true;
   const source: "serper" | "tavily" = agentKey === "sourcing-serper" ? "serper" : "tavily";
+  const modelProvider =
+    typeof value.modelProvider === "string" && value.modelProvider.trim()
+      ? value.modelProvider.trim()
+      : agentKey === "sourcing-serper"
+        ? "openai"
+        : "claude";
   const defaultKeywords = typeof value.defaultKeywords === "string" ? value.defaultKeywords : "";
   const qualificationInstructions = typeof value.qualificationInstructions === "string" ? value.qualificationInstructions : "";
   const defaultSector = typeof value.defaultSector === "string" ? value.defaultSector : "";
   const defaultZone = typeof value.defaultZone === "string" ? value.defaultZone : "";
   const defaultTargetCount = typeof value.defaultTargetCount === "number" ? value.defaultTargetCount : 20;
-  const modelId = typeof value.modelId === "string" && value.modelId ? value.modelId : agentKey === "sourcing-serper" ? "gpt-4o-mini" : "claude-3-5-sonnet";
+  const modelId = typeof value.modelId === "string" && value.modelId ? value.modelId : "";
   const systemPrompt =
     typeof value.systemPrompt === "string" && value.systemPrompt
       ? value.systemPrompt
@@ -1161,6 +1171,7 @@ function parseSourcingGlobalAgent(value: unknown): SourcingGlobalAgent | null {
     displayName,
     isEnabled,
     source,
+    modelProvider,
     modelId,
     defaultKeywords,
     qualificationInstructions,
@@ -1176,6 +1187,18 @@ function parseSourcingGlobalAgent(value: unknown): SourcingGlobalAgent | null {
   };
 }
 
+async function resolveSourcingModelSelection(
+  providerId: string,
+  requestedModel: string,
+  fallbackModel: string
+) {
+  const provider = await getChatProviderConfig(providerId, requestedModel || fallbackModel);
+  return {
+    modelProvider: providerId,
+    modelId: requestedModel || provider?.model || fallbackModel
+  };
+}
+
 const loadSourcingPlans = () => loadStoredArray(SAAS_SOURCING_PLANS_KEY, parseSourcingPlan);
 const saveSourcingPlans = (items: SourcingPlan[]) => saveStoredArray(SAAS_SOURCING_PLANS_KEY, items);
 const loadGlobalAgentsRaw = () => loadStoredArray(SAAS_GLOBAL_AGENTS_KEY, parseSourcingGlobalAgent);
@@ -1184,13 +1207,18 @@ const saveGlobalAgents = (items: SourcingGlobalAgent[]) => saveStoredArray(SAAS_
 async function getGlobalAgents(): Promise<SourcingGlobalAgent[]> {
   const stored = await loadGlobalAgentsRaw();
   const now = new Date().toISOString();
+  const [serperModel, tavilyModel] = await Promise.all([
+    resolveSourcingModelSelection("openai", "", "gpt-4o-mini"),
+    resolveSourcingModelSelection("claude", "", "claude-sonnet-4-20250514")
+  ]);
   const defaults: SourcingGlobalAgent[] = [
     {
       agentKey: "sourcing-serper",
       displayName: "Agent Découverte",
       isEnabled: true,
       source: "serper",
-      modelId: "gpt-4o-mini",
+      modelProvider: serperModel.modelProvider,
+      modelId: serperModel.modelId,
       defaultKeywords: "",
       qualificationInstructions: "",
       defaultSector: "",
@@ -1208,7 +1236,8 @@ async function getGlobalAgents(): Promise<SourcingGlobalAgent[]> {
       displayName: "Agent Qualification",
       isEnabled: true,
       source: "tavily",
-      modelId: "claude-3-5-sonnet",
+      modelProvider: tavilyModel.modelProvider,
+      modelId: tavilyModel.modelId,
       defaultKeywords: "",
       qualificationInstructions: "",
       defaultSector: "",
@@ -1222,7 +1251,16 @@ async function getGlobalAgents(): Promise<SourcingGlobalAgent[]> {
       updatedAt: now
     }
   ];
-  return defaults.map((def) => stored.find((s) => s.agentKey === def.agentKey) ?? def);
+  return defaults.map((def) => {
+    const existing = stored.find((s) => s.agentKey === def.agentKey);
+    if (!existing) return def;
+    return {
+      ...def,
+      ...existing,
+      modelProvider: existing.modelProvider || def.modelProvider,
+      modelId: existing.modelId || def.modelId
+    };
+  });
 }
 
 const loadCompanies = () => loadStoredArray(SAAS_COMPANIES_KEY, parseCompany);
@@ -1532,7 +1570,7 @@ function createDefaultAgentProfile(
   overrides?: Partial<
     Pick<
       SaasAgentProfile,
-      "agentKey" | "displayName" | "systemPrompt" | "personality" | "identity" | "userContext" | "allowedTools"
+      "agentKey" | "displayName" | "systemPrompt" | "personality" | "identity" | "userContext" | "allowedTools" | "modelProvider" | "modelId"
     > & { missionSource: SaasAgentProfile["missionConfig"]["source"] }
   >
 ): SaasAgentProfile {
@@ -1553,7 +1591,8 @@ function createDefaultAgentProfile(
     displayName: overrides?.displayName ?? module.title,
     isEnabled: true,
     tone: "Professionnel, clair et rassurant.",
-    modelId: "gpt-4o-mini",
+    modelProvider: overrides?.modelProvider ?? "openai",
+    modelId: overrides?.modelId ?? "",
     systemPrompt:
       overrides?.systemPrompt ??
       (moduleKey === "sourcing-commercial"
@@ -1636,6 +1675,7 @@ function applyGlobalAgentTemplateToProfile(
     ...profile,
     displayName: template.displayName,
     isEnabled: template.isEnabled,
+    modelProvider: template.modelProvider,
     modelId: template.modelId,
     systemPrompt: template.systemPrompt,
     personality: template.personality,
@@ -1662,6 +1702,8 @@ async function createSourcingProfilesFromGlobalAgents(company: SaasCompany) {
       createDefaultAgentProfile(company, "sourcing-commercial", {
         agentKey: template.agentKey,
         displayName: template.displayName,
+        modelProvider: template.modelProvider,
+        modelId: template.modelId,
         missionSource: template.source,
         systemPrompt: template.systemPrompt,
         personality: template.personality,
@@ -2777,6 +2819,7 @@ function toPublicAgentProfile(profile: SaasAgentProfile, runs: SaasSourcingRun[]
     displayName: profile.displayName,
     isEnabled: profile.isEnabled,
     tone: profile.tone,
+    modelProvider: profile.modelProvider,
     modelId: profile.modelId,
     systemPrompt: profile.systemPrompt,
     personality: profile.personality,
@@ -4287,6 +4330,10 @@ saasRouter.patch("/agents/:agentKey", async (req, res, next) => {
             displayName: typeof req.body?.displayName === "string" && req.body.displayName.trim() ? req.body.displayName.trim() : item.displayName,
             isEnabled: typeof req.body?.isEnabled === "boolean" ? req.body.isEnabled : item.isEnabled,
             tone: typeof req.body?.tone === "string" ? req.body.tone.trim() : item.tone,
+            modelProvider:
+              typeof req.body?.modelProvider === "string" && req.body.modelProvider.trim()
+                ? req.body.modelProvider.trim()
+                : item.modelProvider,
             modelId: typeof req.body?.modelId === "string" && req.body.modelId.trim() ? req.body.modelId.trim() : item.modelId,
             systemPrompt: typeof req.body?.systemPrompt === "string" ? req.body.systemPrompt.trim() : item.systemPrompt,
             personality: typeof req.body?.personality === "string" ? req.body.personality.trim() : item.personality,
@@ -5642,6 +5689,10 @@ saasRouter.patch("/admin/sourcing/global-agents/:agentKey", async (req, res, nex
       ...agent,
       displayName: typeof req.body?.displayName === "string" ? req.body.displayName.trim() || agent.displayName : agent.displayName,
       isEnabled: typeof req.body?.isEnabled === "boolean" ? req.body.isEnabled : agent.isEnabled,
+      modelProvider:
+        typeof req.body?.modelProvider === "string" && req.body.modelProvider.trim()
+          ? req.body.modelProvider.trim()
+          : agent.modelProvider,
       modelId: typeof req.body?.modelId === "string" && req.body.modelId ? req.body.modelId : agent.modelId,
       defaultKeywords: typeof req.body?.defaultKeywords === "string" ? req.body.defaultKeywords : agent.defaultKeywords,
       qualificationInstructions: typeof req.body?.qualificationInstructions === "string" ? req.body.qualificationInstructions : agent.qualificationInstructions,
