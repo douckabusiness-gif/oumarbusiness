@@ -247,6 +247,32 @@ function isConfigured(agent: AgentConfig) {
   );
 }
 
+function getConfigurationIssues(agent: AgentConfig) {
+  const issues: string[] = [];
+
+  if (!agent.source?.trim()) {
+    issues.push("source manquante");
+  }
+
+  if (!agent.keywords?.trim()) {
+    issues.push("mots-cles manquants");
+  }
+
+  if (!agent.instructions?.trim()) {
+    issues.push("instructions manquantes");
+  }
+
+  if (
+    typeof agent.defaultTargetCount !== "number" ||
+    Number.isNaN(agent.defaultTargetCount) ||
+    agent.defaultTargetCount <= 0
+  ) {
+    issues.push("nombre cible invalide");
+  }
+
+  return issues;
+}
+
 function cardStatus(agent: AgentConfig, liveSession: LiveSession | null) {
   const active = liveSession?.activeAgentKeys?.includes(agent.agentKey);
 
@@ -425,8 +451,11 @@ export default function UserAgentsPage() {
         {agents.map((agent) => {
           const active = liveSession?.activeAgentKeys?.includes(agent.agentKey) ?? false;
           const status = cardStatus(agent, liveSession);
-          const configured = isConfigured(agent);
+          const configurationIssues = getConfigurationIssues(agent);
+          const configured = configurationIssues.length === 0 && isConfigured(agent);
           const actionKeyPrefix = `${agent.agentKey}:`;
+          const launchAction = liveSession?.status === "paused" ? "resume" : "start";
+          const launchBusy = busyAgent === `${agent.agentKey}:${launchAction}`;
 
           return (
             <article
@@ -484,7 +513,7 @@ export default function UserAgentsPage() {
 
               {!configured ? (
                 <div className="mt-4 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-                  Cet agent doit etre configure completement avant de pouvoir demarrer.
+                  Configuration incomplete: {configurationIssues.join(", ")}.
                 </div>
               ) : null}
 
@@ -492,13 +521,13 @@ export default function UserAgentsPage() {
                 {!active ? (
                   <button
                     type="button"
-                    onClick={() => void handleAgentAction(agent.agentKey, liveSession ? "resume" : "start")}
+                    onClick={() => void handleAgentAction(agent.agentKey, launchAction)}
                     disabled={!configured || busyAgent?.startsWith(actionKeyPrefix)}
-                    className="rounded-2xl bg-amber-400 px-5 py-3 text-sm font-semibold text-black transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+                    className="inline-flex min-h-12 min-w-[140px] items-center justify-center rounded-2xl bg-gold px-5 py-3 text-sm font-semibold text-black shadow-gold transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:border disabled:border-zinc-700 disabled:bg-zinc-900 disabled:text-zinc-300 disabled:shadow-none"
                   >
-                    {busyAgent === `${agent.agentKey}:${liveSession ? "resume" : "start"}`
+                    {launchBusy
                       ? "Patiente..."
-                      : liveSession
+                      : launchAction === "resume"
                         ? "Reprendre"
                         : "Lancer"}
                   </button>
@@ -528,7 +557,7 @@ export default function UserAgentsPage() {
                 <button
                   type="button"
                   onClick={() => setEditing(agent)}
-                  className="rounded-2xl border border-zinc-700 px-5 py-3 text-sm font-medium text-zinc-200 transition hover:border-zinc-500"
+                  className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-zinc-700 px-5 py-3 text-sm font-medium text-zinc-200 transition hover:border-zinc-500"
                 >
                   Configurer
                 </button>
