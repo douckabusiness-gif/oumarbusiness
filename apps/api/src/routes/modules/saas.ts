@@ -1359,15 +1359,30 @@ async function resolveSourcingPlanLimits(subscription: SaasSubscription | null) 
   };
 }
 
-function computeSourcingQuota(runs: SaasSourcingRun[], planLimits: { planName: string; maxRunsPerMonth: number; maxProspectsPerRun: number } | null) {
+function computeSourcingQuota(
+  runs: SaasSourcingRun[],
+  planLimits: { planName: string; maxRunsPerMonth: number; maxProspectsPerRun: number } | null,
+  options?: {
+    accessible?: boolean;
+    prospectsKeptThisMonth?: number;
+  }
+) {
   const monthStart = getCurrentMonthStartIso();
   const runsThisMonth = runs.filter((run) => run.createdAt >= monthStart).length;
+  const runsRemaining = planLimits ? Math.max(planLimits.maxRunsPerMonth - runsThisMonth, 0) : null;
+  const accessible = options?.accessible ?? true;
+  const prospectsKeptThisMonth = options?.prospectsKeptThisMonth ?? 0;
   return {
     planName: planLimits?.planName ?? null,
     maxRunsPerMonth: planLimits?.maxRunsPerMonth ?? null,
     maxProspectsPerRun: planLimits?.maxProspectsPerRun ?? null,
     runsThisMonth,
-    runsRemaining: planLimits ? Math.max(planLimits.maxRunsPerMonth - runsThisMonth, 0) : null
+    runsRemaining,
+    monthlyRunLimit: planLimits?.maxRunsPerMonth ?? null,
+    monthlyRunsUsed: runsThisMonth,
+    monthlyRunsRemaining: runsRemaining,
+    monthlyProspectsKept: prospectsKeptThisMonth,
+    canRun: accessible && (runsRemaining === null || runsRemaining > 0)
   };
 }
 
@@ -3684,7 +3699,12 @@ saasRouter.get("/agents/live", async (req, res, next) => {
     const session = getCurrentLiveSession(runtime.liveSessions);
     const subscription = runtime.subscriptions.find((item) => item.moduleKey === "sourcing-commercial") ?? null;
     const planLimits = await resolveSourcingPlanLimits(subscription);
-    const quota = computeSourcingQuota(runtime.runs, planLimits);
+    const quota = computeSourcingQuota(runtime.runs, planLimits, {
+      accessible: Boolean(subscription && isAccessibleSubscriptionStatus(subscription.status)),
+      prospectsKeptThisMonth: runtime.runs
+        .filter((run) => run.createdAt >= getCurrentMonthStartIso())
+        .reduce((sum, run) => sum + run.foundCount, 0)
+    });
     const feed = runtime.liveEvents
       .filter((event) => !session || event.sessionId === session.id)
       .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
@@ -4386,7 +4406,10 @@ saasRouter.get("/modules/:moduleKey/workspace", async (req, res, next) => {
     const runsThisMonth = runs.filter((run) => run.createdAt >= monthStart).length;
     const prospectsThisMonth = runs.filter((run) => run.createdAt >= monthStart).reduce((sum, run) => sum + run.foundCount, 0);
     const planLimits = await resolveSourcingPlanLimits(subscription ?? null);
-    const quota = computeSourcingQuota(runtime.runs, planLimits);
+    const quota = computeSourcingQuota(runtime.runs, planLimits, {
+      accessible: accessible,
+      prospectsKeptThisMonth: prospectsThisMonth
+    });
     const session = getCurrentLiveSession(runtime.liveSessions);
     const feed = runtime.liveEvents
       .filter((event) => !session || event.sessionId === session.id)
@@ -4443,7 +4466,9 @@ async function executeUserSourcingRun(
   }
 
   const planLimits = await resolveSourcingPlanLimits(subscription);
-  const quota = computeSourcingQuota(runtime.runs, planLimits);
+  const quota = computeSourcingQuota(runtime.runs, planLimits, {
+    accessible: isAccessibleSubscriptionStatus(subscription.status)
+  });
   if (planLimits && quota.runsRemaining !== null && quota.runsRemaining <= 0) {
     return { ok: false, code: "quota", error: `Le quota mensuel du plan ${planLimits.planName} est atteint.` };
   }
@@ -4607,7 +4632,9 @@ async function processSourcingLiveSession(sessionId: string) {
     }
 
     const planLimits = await resolveSourcingPlanLimits(subscription);
-    const quota = computeSourcingQuota(runtime.runs, planLimits);
+    const quota = computeSourcingQuota(runtime.runs, planLimits, {
+      accessible: isAccessibleSubscriptionStatus(subscription.status)
+    });
     if (planLimits && quota.runsRemaining !== null && quota.runsRemaining <= 0) {
       await stopSourcingLiveSession(sessionId, "blocked", `Le quota mensuel du plan ${planLimits.planName} est atteint.`, "quota_reached");
       return;

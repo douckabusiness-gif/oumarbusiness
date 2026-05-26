@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { SaasPortalShell } from "@/components/saas/SaasPortalShell";
 
 type HistoryRun = {
   id: string;
@@ -158,22 +159,19 @@ export default function UserHistoryPage() {
   }, [runs]);
 
   return (
-    <div className="space-y-8">
-      <section className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="text-xs uppercase tracking-[0.32em] text-zinc-500">Espace Utilisateur</div>
-          <h1 className="mt-3 text-4xl font-semibold text-white">Historique</h1>
-          <p className="mt-2 max-w-3xl text-base text-zinc-400">
-            Suis les cycles live, les runs executes et les evenements remontes par Serper et Tavily.
-          </p>
-        </div>
-        <Link
-          href="/user/agents"
-          className="inline-flex items-center justify-center rounded-2xl border border-amber-400/40 bg-amber-400/10 px-5 py-3 text-sm font-medium text-amber-200 transition hover:bg-amber-400/15"
-        >
-          Retour au centre live
-        </Link>
-      </section>
+    <SaasPortalShell
+      title="Historique"
+      subtitle="Suis les cycles live, les runs executes et les evenements des agents."
+    >
+      <div className="space-y-8">
+        <section className="flex justify-end">
+          <Link
+            href="/user/agents"
+            className="inline-flex items-center justify-center rounded-2xl border border-amber-400/40 bg-amber-400/10 px-5 py-3 text-sm font-medium text-amber-200 transition hover:bg-amber-400/15"
+          >
+            Retour au centre live
+          </Link>
+        </section>
 
       {error ? (
         <div className="rounded-3xl border border-rose-500/30 bg-rose-500/10 px-5 py-4 text-sm text-rose-200">
@@ -299,7 +297,8 @@ export default function UserHistoryPage() {
           </div>
         </div>
       </section>
-    </div>
+      </div>
+    </SaasPortalShell>
   );
 }
 

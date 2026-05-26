@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { SaasPortalShell } from "@/components/saas/SaasPortalShell";
 
 type ProspectItem = {
   id: string;
@@ -106,16 +107,12 @@ export default function UserProspectsPage() {
   }, [prospects]);
 
   return (
-    <div className="space-y-8">
-      <section className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="text-xs uppercase tracking-[0.32em] text-zinc-500">Espace Utilisateur</div>
-          <h1 className="mt-3 text-4xl font-semibold text-white">Mes prospects</h1>
-          <p className="mt-2 max-w-3xl text-base text-zinc-400">
-            Tous les contacts qualifies par tes agents Serper et Tavily, avec leur origine live.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-3">
+    <SaasPortalShell
+      title="Mes prospects"
+      subtitle="Retrouve les contacts retenus par tes agents et leur origine live."
+    >
+      <div className="space-y-8">
+        <section className="flex flex-wrap justify-end gap-3">
           <Link
             href="/user/agents"
             className="inline-flex items-center justify-center rounded-2xl bg-amber-400 px-5 py-3 text-sm font-semibold text-black transition hover:bg-amber-300"
@@ -128,8 +125,7 @@ export default function UserProspectsPage() {
           >
             Centre live
           </Link>
-        </div>
-      </section>
+        </section>
 
       {error ? (
         <div className="rounded-3xl border border-rose-500/30 bg-rose-500/10 px-5 py-4 text-sm text-rose-200">
@@ -209,7 +205,8 @@ export default function UserProspectsPage() {
           ))
         )}
       </section>
-    </div>
+      </div>
+    </SaasPortalShell>
   );
 }
 

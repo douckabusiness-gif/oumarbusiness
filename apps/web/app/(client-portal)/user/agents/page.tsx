@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { SaasPortalShell } from "@/components/saas/SaasPortalShell";
 
 type AgentMetrics = {
   runs?: number;
@@ -326,16 +327,12 @@ export default function UserAgentsPage() {
   );
 
   return (
-    <div className="space-y-8">
-      <section className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="text-xs uppercase tracking-[0.32em] text-zinc-500">Espace Utilisateur</div>
-          <h1 className="mt-3 text-4xl font-semibold text-white">Agents IA</h1>
-          <p className="mt-2 max-w-3xl text-base text-zinc-400">
-            Configure chaque agent une fois, puis lance Serper et Tavily separement sans brief manuel partage.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-3">
+    <SaasPortalShell
+      title="Agents"
+      subtitle="Configure chaque agent, puis lance-les separement depuis leurs cartes."
+    >
+      <div className="space-y-8">
+        <section className="flex flex-wrap justify-end gap-3">
           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3 text-sm text-zinc-300">
             {quota?.monthlyRunsRemaining == null
               ? "Runs restants illimites"
@@ -348,8 +345,7 @@ export default function UserAgentsPage() {
           >
             Arreter tous les agents
           </button>
-        </div>
-      </section>
+        </section>
 
       {error ? (
         <div className="rounded-3xl border border-rose-500/30 bg-rose-500/10 px-5 py-4 text-sm text-rose-200">
@@ -534,7 +530,8 @@ export default function UserAgentsPage() {
           onSave={handleSave}
         />
       ) : null}
-    </div>
+      </div>
+    </SaasPortalShell>
   );
 }
 
