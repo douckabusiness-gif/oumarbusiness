@@ -242,8 +242,6 @@ function isConfigured(agent: AgentConfig) {
     agent.source?.trim() &&
       agent.keywords?.trim() &&
       agent.instructions?.trim() &&
-      agent.defaultSector?.trim() &&
-      agent.defaultZone?.trim() &&
       typeof agent.defaultTargetCount === "number" &&
       agent.defaultTargetCount > 0,
   );

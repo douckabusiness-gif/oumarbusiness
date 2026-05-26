@@ -3760,7 +3760,12 @@ saasRouter.post("/agents/live/start", async (req, res, next) => {
 
     const liveAgents = runtime.profiles
       .filter((item) => item.moduleKey === "sourcing-commercial" && item.isEnabled)
-      .filter((item) => item.missionConfig.keywords.trim() && item.missionConfig.qualificationInstructions.trim() && item.missionConfig.defaultSector.trim() && item.missionConfig.defaultZone.trim())
+      .filter(
+        (item) =>
+          item.missionConfig.keywords.trim() &&
+          item.missionConfig.qualificationInstructions.trim() &&
+          Number(item.missionConfig.defaultTargetCount ?? 0) > 0,
+      )
       .sort((left, right) => agentRank(left.agentKey) - agentRank(right.agentKey));
     if (!liveAgents.length) {
       return res.status(409).json({ error: "Aucun agent actif n'est pret pour demarrer la session live." });
