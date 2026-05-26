@@ -1077,7 +1077,7 @@ function GlobalAgentsTab({ apiSettingsVersion }: { apiSettingsVersion: number })
   }
 
   async function saveConfig(agentKey: string) {
-    const patch = forms[agentKey] ?? {};
+    const patch = { ...(forms[agentKey] ?? {}), modelId: "" };
     try {
       setSavingKey(agentKey);
       const r = await fetch(`${apiBaseUrl}/api/sourcing/admin/sourcing/global-agents/${agentKey}`, {
@@ -1151,19 +1151,6 @@ function GlobalAgentsTab({ apiSettingsVersion }: { apiSettingsVersion: number })
           const productName = agent.agentKey === "sourcing-serper" ? "Agent Découverte" : "Agent Qualification";
           const productSubtitle = isSerper ? "Template produit — découverte rapide" : "Template produit — qualification approfondie";
           const selectedProviderId = String(form.modelProvider ?? agent.modelProvider ?? (isSerper ? "openai" : "claude"));
-          const selectedProvider =
-            chatProviders.find((provider) => provider.id === selectedProviderId) ??
-            chatProviders[0] ??
-            null;
-          const availableModels =
-            selectedProvider?.models?.length
-              ? selectedProvider.models
-              : selectedProvider?.defaultModel
-                ? [selectedProvider.defaultModel]
-                : String(form.modelId ?? agent.modelId ?? "").trim()
-                  ? [String(form.modelId ?? agent.modelId)]
-                  : [];
-
           return (
             <article
               key={agent.agentKey}
@@ -1243,26 +1230,6 @@ function GlobalAgentsTab({ apiSettingsVersion }: { apiSettingsVersion: number })
                         ))}
                       </select>
                       <p className="mt-1 text-xs text-zinc-600">Choisi d'abord le fournisseur branche a ta cle API.</p>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Modele IA</label>
-                      <select
-                        value={String(form.modelId ?? agent.modelId ?? "")}
-                        onChange={(e) => updateForm(agent.agentKey, "modelId", e.target.value)}
-                        className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 focus:border-gold/40 focus:outline-none"
-                      >
-                        <option value="">
-                          {selectedProvider ? "Choisir un modele" : "Choisir d'abord un fournisseur"}
-                        </option>
-                        {availableModels.map((model) => (
-                          <option key={model} value={model}>
-                            {model}
-                          </option>
-                        ))}
-                      </select>
-                      <p className="mt-1 text-xs text-zinc-600">
-                        Les modeles viennent du fournisseur choisi dans Parametres API.
-                      </p>
                     </div>
                   </div>
                   {editorSection === "mission" ? (
@@ -1411,12 +1378,6 @@ function GlobalAgentsTab({ apiSettingsVersion }: { apiSettingsVersion: number })
                     <span className="text-zinc-400">Fournisseur IA:</span>{" "}
                     <span className="rounded-full bg-white/5 px-2 py-0.5 text-xs font-semibold text-zinc-200">
                       {chatProviders.find((provider) => provider.id === agent.modelProvider)?.name ?? agent.modelProvider}
-                    </span>
-                  </p>
-                  <p>
-                    <span className="text-zinc-400">Modele IA:</span>{" "}
-                    <span className="rounded-full bg-gold/10 px-2 py-0.5 text-xs font-semibold text-gold">
-                      {agent.modelId || "Aucun modele choisi"}
                     </span>
                   </p>
                   <p><span className="text-zinc-400">Source interne:</span> {isSerper ? "Serper" : "Tavily"}</p>
