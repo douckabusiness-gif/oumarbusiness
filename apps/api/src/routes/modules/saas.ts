@@ -262,6 +262,8 @@ type SaasSourcingSession = {
   updatedAt: string;
   stoppedAt?: string;
   activeAgentKeys: string[];
+  pausedAgentKeys?: string[];
+  brief?: string;
   stopReason?: string;
   cycleCount: number;
   lastCycleAt?: string;
@@ -350,6 +352,11 @@ type SourcingGlobalAgent = {
   defaultSector: string;
   defaultZone: string;
   defaultTargetCount: number;
+  systemPrompt: string;
+  personality: string;
+  identity: string;
+  userContext: string;
+  allowedTools: string[];
   updatedAt: string;
 };
 
@@ -787,8 +794,6 @@ function parseSourcingRun(value: unknown): SaasSourcingRun | null {
     !agentKey ||
     !agentName ||
     !brief ||
-    !sector ||
-    !zone ||
     !isSourcingRunStatus(status) ||
     !createdAt
   ) {
@@ -827,6 +832,8 @@ function parseSourcingSession(value: unknown): SaasSourcingSession | null {
   const updatedAt = typeof value.updatedAt === "string" ? value.updatedAt : "";
   const stoppedAt = typeof value.stoppedAt === "string" ? value.stoppedAt : undefined;
   const activeAgentKeys = Array.isArray(value.activeAgentKeys) ? value.activeAgentKeys.map(String).map((item) => item.trim()).filter(Boolean) : [];
+  const pausedAgentKeys = Array.isArray(value.pausedAgentKeys) ? value.pausedAgentKeys.map(String).map((item) => item.trim()).filter(Boolean) : [];
+  const brief = typeof value.brief === "string" ? value.brief : undefined;
   const stopReason = typeof value.stopReason === "string" ? value.stopReason : undefined;
   const cycleCount = typeof value.cycleCount === "number" ? value.cycleCount : 0;
   const lastCycleAt = typeof value.lastCycleAt === "string" ? value.lastCycleAt : undefined;
@@ -843,6 +850,8 @@ function parseSourcingSession(value: unknown): SaasSourcingSession | null {
     updatedAt,
     ...(stoppedAt ? { stoppedAt } : {}),
     activeAgentKeys,
+    ...(pausedAgentKeys.length ? { pausedAgentKeys } : {}),
+    ...(brief ? { brief } : {}),
     ...(stopReason ? { stopReason } : {}),
     cycleCount,
     ...(lastCycleAt ? { lastCycleAt } : {}),
@@ -1043,6 +1052,12 @@ function agentRank(agentKey: string) {
   return 2;
 }
 
+function agentLabel(agentKey: string) {
+  if (agentKey === "sourcing-serper") return "Agent Serper";
+  if (agentKey === "sourcing-tavily") return "Agent Tavily";
+  return "Agent sourcing";
+}
+
 function addDays(source: string | Date, days: number) {
   const next = new Date(source);
   next.setDate(next.getDate() + days);
@@ -1097,8 +1112,54 @@ function parseSourcingGlobalAgent(value: unknown): SourcingGlobalAgent | null {
   const defaultZone = typeof value.defaultZone === "string" ? value.defaultZone : "";
   const defaultTargetCount = typeof value.defaultTargetCount === "number" ? value.defaultTargetCount : 20;
   const modelId = typeof value.modelId === "string" && value.modelId ? value.modelId : agentKey === "sourcing-serper" ? "gpt-4o-mini" : "claude-3-5-sonnet";
+  const systemPrompt =
+    typeof value.systemPrompt === "string" && value.systemPrompt
+      ? value.systemPrompt
+      : agentKey === "sourcing-serper"
+        ? "Tu es l'agent Serper. Tu trouves rapidement des entreprises, annuaires et pages utiles depuis la recherche web publique. Tu privilegies la decouverte rapide et la pertinence locale."
+        : "Tu es l'agent Tavily. Tu analyses les pages trouvees, extrais les signaux utiles et qualifies les prospects avec plus de profondeur. Tu ne resumes que ce qui est visible dans les sources reelles.";
+  const personality =
+    typeof value.personality === "string" && value.personality
+      ? value.personality
+      : agentKey === "sourcing-serper"
+        ? "Rapide, methodique, oriente decouverte et tri initial."
+        : "Analytique, rigoureux, oriente qualification et synthese.";
+  const identity =
+    typeof value.identity === "string" && value.identity
+      ? value.identity
+      : agentKey === "sourcing-serper"
+        ? "Template global Serper pour ouvrir le terrain et proposer une premiere liste de prospects."
+        : "Template global Tavily pour enrichir les pistes et mettre en avant les meilleurs prospects.";
+  const userContext =
+    typeof value.userContext === "string" && value.userContext
+      ? value.userContext
+      : agentKey === "sourcing-serper"
+        ? "Tu identifies des pistes web visibles et prepares une premiere selection exploitable."
+        : "Tu lis les contenus publics, resumes les points utiles et aides a prioriser les prospects.";
+  const allowedTools = Array.isArray(value.allowedTools)
+    ? value.allowedTools.map(String).map((entry) => entry.trim()).filter(Boolean)
+    : agentKey === "sourcing-serper"
+      ? ["webScraper", "searchKnowledge"]
+      : ["webScraper", "searchKnowledge", "summarizeThread"];
   const updatedAt = typeof value.updatedAt === "string" ? value.updatedAt : new Date().toISOString();
-  return { agentKey, displayName, isEnabled, source, modelId, defaultKeywords, qualificationInstructions, defaultSector, defaultZone, defaultTargetCount, updatedAt };
+  return {
+    agentKey,
+    displayName,
+    isEnabled,
+    source,
+    modelId,
+    defaultKeywords,
+    qualificationInstructions,
+    defaultSector,
+    defaultZone,
+    defaultTargetCount,
+    systemPrompt,
+    personality,
+    identity,
+    userContext,
+    allowedTools,
+    updatedAt
+  };
 }
 
 const loadSourcingPlans = () => loadStoredArray(SAAS_SOURCING_PLANS_KEY, parseSourcingPlan);
@@ -1110,8 +1171,42 @@ async function getGlobalAgents(): Promise<SourcingGlobalAgent[]> {
   const stored = await loadGlobalAgentsRaw();
   const now = new Date().toISOString();
   const defaults: SourcingGlobalAgent[] = [
-    { agentKey: "sourcing-serper", displayName: "Agent Serper", isEnabled: true, source: "serper", modelId: "gpt-4o-mini", defaultKeywords: "", qualificationInstructions: "", defaultSector: "", defaultZone: "", defaultTargetCount: 20, updatedAt: now },
-    { agentKey: "sourcing-tavily", displayName: "Agent Tavily", isEnabled: true, source: "tavily", modelId: "claude-3-5-sonnet", defaultKeywords: "", qualificationInstructions: "", defaultSector: "", defaultZone: "", defaultTargetCount: 10, updatedAt: now }
+    {
+      agentKey: "sourcing-serper",
+      displayName: "Agent Serper",
+      isEnabled: true,
+      source: "serper",
+      modelId: "gpt-4o-mini",
+      defaultKeywords: "",
+      qualificationInstructions: "",
+      defaultSector: "",
+      defaultZone: "",
+      defaultTargetCount: 20,
+      systemPrompt: "Tu es l'agent Serper. Tu trouves rapidement des entreprises, annuaires et pages utiles depuis la recherche web publique. Tu privilegies la decouverte rapide et la pertinence locale.",
+      personality: "Rapide, methodique, oriente decouverte et tri initial.",
+      identity: "Template global Serper pour ouvrir le terrain et proposer une premiere liste de prospects.",
+      userContext: "Tu identifies des pistes web visibles et prepares une premiere selection exploitable.",
+      allowedTools: ["webScraper", "searchKnowledge"],
+      updatedAt: now
+    },
+    {
+      agentKey: "sourcing-tavily",
+      displayName: "Agent Tavily",
+      isEnabled: true,
+      source: "tavily",
+      modelId: "claude-3-5-sonnet",
+      defaultKeywords: "",
+      qualificationInstructions: "",
+      defaultSector: "",
+      defaultZone: "",
+      defaultTargetCount: 10,
+      systemPrompt: "Tu es l'agent Tavily. Tu analyses les pages trouvees, extrais les signaux utiles et qualifies les prospects avec plus de profondeur. Tu ne resumes que ce qui est visible dans les sources reelles.",
+      personality: "Analytique, rigoureux, oriente qualification et synthese.",
+      identity: "Template global Tavily pour enrichir les pistes et mettre en avant les meilleurs prospects.",
+      userContext: "Tu lis les contenus publics, resumes les points utiles et aides a prioriser les prospects.",
+      allowedTools: ["webScraper", "searchKnowledge", "summarizeThread"],
+      updatedAt: now
+    }
   ];
   return defaults.map((def) => stored.find((s) => s.agentKey === def.agentKey) ?? def);
 }
@@ -1396,6 +1491,8 @@ async function stopSourcingLiveSession(
   const updated = await updateSourcingLiveSession(sessionId, (session) => ({
     ...session,
     status,
+    activeAgentKeys: [],
+    pausedAgentKeys: [],
     stopReason: reason,
     stoppedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -1514,6 +1611,81 @@ function createDefaultAgentProfiles(company: SaasCompany, moduleKey: ModuleKey):
       allowedTools: ["webScraper", "searchKnowledge", "summarizeThread"]
     })
   ];
+}
+
+function applyGlobalAgentTemplateToProfile(
+  profile: SaasAgentProfile,
+  template: SourcingGlobalAgent,
+  company: SaasCompany
+): SaasAgentProfile {
+  return {
+    ...profile,
+    displayName: template.displayName,
+    isEnabled: template.isEnabled,
+    modelId: template.modelId,
+    systemPrompt: template.systemPrompt,
+    personality: template.personality,
+    identity: template.identity.includes(company.name) ? template.identity : template.identity,
+    userContext: template.userContext,
+    allowedTools: template.allowedTools,
+    missionConfig: {
+      ...profile.missionConfig,
+      source: template.source,
+      keywords: template.defaultKeywords,
+      qualificationInstructions: template.qualificationInstructions,
+      defaultSector: template.defaultSector,
+      defaultZone: template.defaultZone,
+      defaultTargetCount: template.defaultTargetCount
+    },
+    updatedAt: new Date().toISOString()
+  };
+}
+
+async function createSourcingProfilesFromGlobalAgents(company: SaasCompany) {
+  const globalAgents = await getGlobalAgents();
+  return globalAgents.map((template) =>
+    applyGlobalAgentTemplateToProfile(
+      createDefaultAgentProfile(company, "sourcing-commercial", {
+        agentKey: template.agentKey,
+        displayName: template.displayName,
+        missionSource: template.source,
+        systemPrompt: template.systemPrompt,
+        personality: template.personality,
+        identity: template.identity,
+        userContext: template.userContext,
+        allowedTools: template.allowedTools
+      }),
+      template,
+      company
+    )
+  );
+}
+
+async function reapplyGlobalAgentTemplateToExistingProfiles(agentKey: "sourcing-serper" | "sourcing-tavily") {
+  const [companies, profiles, globalAgents] = await Promise.all([loadCompanies(), loadAgentProfiles(), getGlobalAgents()]);
+  const template = globalAgents.find((item) => item.agentKey === agentKey) ?? null;
+  if (!template) return 0;
+
+  let changedCount = 0;
+  const nextProfiles = profiles.map((profile) => {
+    if (profile.moduleKey !== "sourcing-commercial" || profile.agentKey !== agentKey) {
+      return profile;
+    }
+
+    const company = companies.find((item) => item.id === profile.companyId) ?? null;
+    if (!company) {
+      return profile;
+    }
+
+    changedCount += 1;
+    return applyGlobalAgentTemplateToProfile(profile, template, company);
+  });
+
+  if (changedCount > 0) {
+    await saveAgentProfiles(nextProfiles);
+  }
+
+  return changedCount;
 }
 
 function createDefaultSubscription(companyId: string, moduleKey: ModuleKey, nowIso: string): SaasSubscription {
@@ -2149,7 +2321,10 @@ function normalizePhoneForChannel(raw: string) {
 }
 
 function buildSourcingObjective(brief: string, sector: string, zone: string) {
-  return `${brief}. Secteur cible: ${sector}. Zone cible: ${zone}.`;
+  const parts = [brief.trim()];
+  if (sector.trim()) parts.push(`Secteur cible: ${sector.trim()}.`);
+  if (zone.trim()) parts.push(`Zone cible: ${zone.trim()}.`);
+  return parts.filter(Boolean).join(" ").trim();
 }
 
 async function executeSourcingSearch({
@@ -2344,7 +2519,10 @@ async function ensureAgentProfiles(company: SaasCompany) {
 
   for (const module of company.modules) {
     const existingForModule = nextProfiles.filter((item) => item.companyId === company.id && item.moduleKey === module.moduleKey);
-    const defaults = createDefaultAgentProfiles(company, module.moduleKey);
+    const defaults =
+      module.moduleKey === "sourcing-commercial"
+        ? await createSourcingProfilesFromGlobalAgents(company)
+        : createDefaultAgentProfiles(company, module.moduleKey);
 
     for (const defaultProfile of defaults) {
       if (!existingForModule.some((item) => item.agentKey === defaultProfile.agentKey)) {
@@ -2656,6 +2834,8 @@ function toPublicSourcingSession(session: SaasSourcingSession) {
     updatedAt: session.updatedAt,
     stoppedAt: session.stoppedAt ?? null,
     activeAgentKeys: session.activeAgentKeys,
+    pausedAgentKeys: session.pausedAgentKeys ?? [],
+    brief: session.brief ?? "",
     stopReason: session.stopReason ?? null,
     cycleCount: session.cycleCount,
     lastCycleAt: session.lastCycleAt ?? null,
@@ -2790,6 +2970,7 @@ saasRouter.post("/auth/register", sourcingAuthRateLimit, async (req, res, next) 
     await saveUsers([user, ...users]);
     await saveVerifyTokens([...verifyTokens.filter((item) => item.userId !== user.id), verifyToken]);
     await saveSubscriptions([sourcingSubscription, ...subscriptions]);
+    await ensureAgentProfiles(company);
     clearSessionCookie(res);
 
     res.status(201).json({ ok: true, requiresVerification: true, email: user.email });
@@ -3771,28 +3952,60 @@ saasRouter.post("/agents/live/start", async (req, res, next) => {
       return res.status(409).json({ error: "Aucun agent actif n'est pret pour demarrer la session live." });
     }
 
-    const currentSession = getCurrentLiveSession(runtime.liveSessions);
-    if (currentSession?.status === "running") {
-      return res.json({ ok: true, session: toPublicSourcingSession(currentSession) });
+    const requestedAgentKey =
+      typeof req.body?.agentKey === "string" && req.body.agentKey.trim()
+        ? req.body.agentKey.trim()
+        : null;
+    const brief = typeof req.body?.brief === "string" ? req.body.brief.trim() : "";
+    const startableAgents = requestedAgentKey
+      ? liveAgents.filter((agent) => agent.agentKey === requestedAgentKey)
+      : liveAgents;
+
+    if (requestedAgentKey && !startableAgents.length) {
+      return res.status(409).json({ error: "Cet agent n'est pas pret ou n'est pas disponible pour le mode live." });
     }
 
-    if (currentSession?.status === "paused") {
+    const currentSession = getCurrentLiveSession(runtime.liveSessions);
+    const agentKeysToStart = startableAgents.map((agent) => agent.agentKey);
+    const activeBrief = brief || currentSession?.brief || "";
+
+    if (currentSession) {
+      const nextActiveKeys = Array.from(new Set([...currentSession.activeAgentKeys, ...agentKeysToStart]));
+      const nextPausedKeys = (currentSession.pausedAgentKeys ?? []).filter((agentKey) => !agentKeysToStart.includes(agentKey));
+
+      if (
+        currentSession.status === "running" &&
+        agentKeysToStart.every((agentKey) => currentSession.activeAgentKeys.includes(agentKey)) &&
+        activeBrief === (currentSession.brief ?? "")
+      ) {
+        return res.json({ ok: true, session: toPublicSourcingSession(currentSession) });
+      }
+
       const resumed = await updateSourcingLiveSession(currentSession.id, (session) => ({
         ...session,
-        status: "running",
+        status: nextActiveKeys.length ? "running" : "paused",
         stopReason: undefined,
         updatedAt: new Date().toISOString(),
         currentAgentKey: undefined,
-        activeAgentKeys: liveAgents.map((agent) => agent.agentKey)
+        activeAgentKeys: nextActiveKeys,
+        pausedAgentKeys: nextPausedKeys,
+        brief: activeBrief
       }));
       if (!resumed) return res.status(404).json({ error: "Session live introuvable." });
+
+      const message =
+        agentKeysToStart.length > 1
+          ? "Les agents live ont ete lances."
+          : `${agentLabel(agentKeysToStart[0] ?? "")} a ete lance en mode live.`;
       await appendSourcingLiveEvent({
         id: randomUUID(),
         sessionId: resumed.id,
         companyId: resumed.companyId,
-        type: "session_resumed",
+        agentKey: agentKeysToStart.length === 1 ? agentKeysToStart[0] : undefined,
+        agentName: agentKeysToStart.length === 1 ? startableAgents[0]?.displayName : undefined,
+        type: currentSession.status === "paused" ? "session_resumed" : "session_started",
         level: "info",
-        message: "La session live a repris.",
+        message,
         createdAt: new Date().toISOString()
       });
       scheduleSourcingLiveTick(resumed.id, 0);
@@ -3807,17 +4020,21 @@ saasRouter.post("/agents/live/start", async (req, res, next) => {
       status: "running",
       startedAt: now,
       updatedAt: now,
-      activeAgentKeys: liveAgents.map((agent) => agent.agentKey),
-      cycleCount: 0
+      activeAgentKeys: agentKeysToStart,
+      pausedAgentKeys: [],
+      cycleCount: 0,
+      brief: activeBrief
     };
     await saveSourcingLiveSession(session);
     await appendSourcingLiveEvent({
       id: randomUUID(),
       sessionId: session.id,
       companyId: session.companyId,
+      agentKey: agentKeysToStart.length === 1 ? agentKeysToStart[0] : undefined,
+      agentName: agentKeysToStart.length === 1 ? startableAgents[0]?.displayName : undefined,
       type: "session_started",
       level: "info",
-      message: "Les agents live ont ete demarres.",
+      message: agentKeysToStart.length > 1 ? "Les agents live ont ete demarres." : `${agentLabel(agentKeysToStart[0] ?? "")} a ete demarre en mode live.`,
       createdAt: now
     });
     scheduleSourcingLiveTick(session.id, 0);
@@ -3838,6 +4055,43 @@ saasRouter.post("/agents/live/stop", async (req, res, next) => {
     const runtime = await getCompanyRuntime(context.company);
     const session = getCurrentLiveSession(runtime.liveSessions);
     if (!session) return res.status(404).json({ error: "Aucune session live en cours." });
+    const agentKey = typeof req.body?.agentKey === "string" && req.body.agentKey.trim() ? req.body.agentKey.trim() : null;
+
+    if (agentKey) {
+      const nextActiveKeys = session.activeAgentKeys.filter((key) => key !== agentKey);
+      const nextPausedKeys = (session.pausedAgentKeys ?? []).filter((key) => key !== agentKey);
+
+      if (nextActiveKeys.length || nextPausedKeys.length) {
+        const updated = await updateSourcingLiveSession(session.id, (current) => ({
+          ...current,
+          status: nextActiveKeys.length ? "running" : nextPausedKeys.length ? "paused" : "stopped",
+          stopReason: nextActiveKeys.length || nextPausedKeys.length ? undefined : "Arret manuel demande par l'utilisateur.",
+          updatedAt: new Date().toISOString(),
+          currentAgentKey: current.currentAgentKey === agentKey ? undefined : current.currentAgentKey,
+          activeAgentKeys: nextActiveKeys,
+          pausedAgentKeys: nextPausedKeys
+        }));
+        if (!updated) return res.status(404).json({ error: "Session live introuvable." });
+        await appendSourcingLiveEvent({
+          id: randomUUID(),
+          sessionId: updated.id,
+          companyId: updated.companyId,
+          agentKey,
+          agentName: runtime.profiles.find((item) => item.agentKey === agentKey)?.displayName,
+          type: "session_stopped",
+          level: "info",
+          message: `${agentLabel(agentKey)} a ete arrete.`,
+          createdAt: new Date().toISOString()
+        });
+        if (updated.status === "running") {
+          scheduleSourcingLiveTick(updated.id, 0);
+        } else if (updated.status === "paused") {
+          clearSourcingLiveTimer(updated.id);
+        }
+        return res.json({ ok: true, session: toPublicSourcingSession(updated) });
+      }
+    }
+
     const updated = await stopSourcingLiveSession(session.id, "stopped", "Arret manuel demande par l'utilisateur.", "session_stopped");
     res.json({ ok: true, session: updated ? toPublicSourcingSession(updated) : null });
   } catch (error) {
@@ -3856,13 +4110,50 @@ saasRouter.post("/agents/live/pause", async (req, res, next) => {
     const runtime = await getCompanyRuntime(context.company);
     const session = getCurrentLiveSession(runtime.liveSessions);
     if (!session || session.status !== "running") return res.status(404).json({ error: "Aucune session live active a mettre en pause." });
+    const agentKey = typeof req.body?.agentKey === "string" && req.body.agentKey.trim() ? req.body.agentKey.trim() : null;
+
+    if (agentKey) {
+      const nextActiveKeys = session.activeAgentKeys.filter((key) => key !== agentKey);
+      const nextPausedKeys = Array.from(new Set([...(session.pausedAgentKeys ?? []), agentKey]));
+      if (!session.activeAgentKeys.includes(agentKey)) {
+        return res.status(409).json({ error: "Cet agent n'est pas en cours d'execution." });
+      }
+      if (!nextActiveKeys.length) {
+        clearSourcingLiveTimer(session.id);
+      }
+      const pausedAgent = await updateSourcingLiveSession(session.id, (current) => ({
+        ...current,
+        status: nextActiveKeys.length ? "running" : "paused",
+        stopReason: nextActiveKeys.length ? undefined : "Session mise en pause par l'utilisateur.",
+        updatedAt: new Date().toISOString(),
+        currentAgentKey: current.currentAgentKey === agentKey ? undefined : current.currentAgentKey,
+        activeAgentKeys: nextActiveKeys,
+        pausedAgentKeys: nextPausedKeys
+      }));
+      if (!pausedAgent) return res.status(404).json({ error: "Session live introuvable." });
+      await appendSourcingLiveEvent({
+        id: randomUUID(),
+        sessionId: pausedAgent.id,
+        companyId: pausedAgent.companyId,
+        agentKey,
+        agentName: runtime.profiles.find((item) => item.agentKey === agentKey)?.displayName,
+        type: "session_paused",
+        level: "info",
+        message: `${agentLabel(agentKey)} est en pause.`,
+        createdAt: new Date().toISOString()
+      });
+      return res.json({ ok: true, session: toPublicSourcingSession(pausedAgent) });
+    }
+
     clearSourcingLiveTimer(session.id);
     const paused = await updateSourcingLiveSession(session.id, (current) => ({
       ...current,
       status: "paused",
       stopReason: "Session mise en pause par l'utilisateur.",
       updatedAt: new Date().toISOString(),
-      currentAgentKey: undefined
+      currentAgentKey: undefined,
+      pausedAgentKeys: Array.from(new Set([...(current.pausedAgentKeys ?? []), ...current.activeAgentKeys])),
+      activeAgentKeys: []
     }));
     if (!paused) return res.status(404).json({ error: "Session live introuvable." });
     await appendSourcingLiveEvent({
@@ -3890,22 +4181,54 @@ saasRouter.post("/agents/live/resume", async (req, res, next) => {
 
     const runtime = await getCompanyRuntime(context.company);
     const session = getCurrentLiveSession(runtime.liveSessions);
-    if (!session || session.status !== "paused") return res.status(404).json({ error: "Aucune session live en pause a reprendre." });
-    const resumed = await updateSourcingLiveSession(session.id, (current) => ({
-      ...current,
-      status: "running",
-      stopReason: undefined,
-      updatedAt: new Date().toISOString(),
-      currentAgentKey: undefined
-    }));
+    if (!session || (session.status !== "paused" && session.status !== "running")) {
+      return res.status(404).json({ error: "Aucune session live en pause a reprendre." });
+    }
+    const agentKey = typeof req.body?.agentKey === "string" && req.body.agentKey.trim() ? req.body.agentKey.trim() : null;
+    const availableAgentKeys = runtime.profiles
+      .filter((item) => item.moduleKey === "sourcing-commercial" && item.isEnabled)
+      .filter(
+        (item) =>
+          item.missionConfig.keywords.trim() &&
+          item.missionConfig.qualificationInstructions.trim() &&
+          Number(item.missionConfig.defaultTargetCount ?? 0) > 0,
+      )
+      .map((item) => item.agentKey);
+
+    const agentKeysToResume = agentKey
+      ? (session.pausedAgentKeys ?? []).filter((key) => key === agentKey && availableAgentKeys.includes(key))
+      : (session.pausedAgentKeys ?? []).filter((key) => availableAgentKeys.includes(key));
+
+    if (agentKey && !agentKeysToResume.length) {
+      return res.status(409).json({ error: "Cet agent ne peut pas etre repris pour le moment." });
+    }
+
+    const resumed = await updateSourcingLiveSession(session.id, (current) => {
+      const nextActiveKeys = Array.from(new Set([...current.activeAgentKeys, ...agentKeysToResume]));
+      const nextPausedKeys = (current.pausedAgentKeys ?? []).filter((key) => !agentKeysToResume.includes(key));
+      return {
+        ...current,
+        status: nextActiveKeys.length ? "running" : "paused",
+        stopReason: nextActiveKeys.length ? undefined : current.stopReason,
+        updatedAt: new Date().toISOString(),
+        currentAgentKey: undefined,
+        activeAgentKeys: nextActiveKeys,
+        pausedAgentKeys: nextPausedKeys
+      };
+    });
     if (!resumed) return res.status(404).json({ error: "Session live introuvable." });
     await appendSourcingLiveEvent({
       id: randomUUID(),
       sessionId: resumed.id,
       companyId: resumed.companyId,
+      agentKey: agentKeysToResume.length === 1 ? agentKeysToResume[0] : undefined,
+      agentName: agentKeysToResume.length === 1 ? runtime.profiles.find((item) => item.agentKey === agentKeysToResume[0])?.displayName : undefined,
       type: "session_resumed",
       level: "info",
-      message: "La session live a repris.",
+      message:
+        agentKeysToResume.length === 1
+          ? `${agentLabel(agentKeysToResume[0] ?? "")} a repris.`
+          : "La session live a repris.",
       createdAt: new Date().toISOString()
     });
     scheduleSourcingLiveTick(resumed.id, 0);
@@ -4495,8 +4818,8 @@ async function executeUserSourcingRun(
     Math.max(Number(params.targetCount ?? sourcingAgent.missionConfig.defaultTargetCount ?? 6), 1),
     planLimits?.maxProspectsPerRun ?? 10
   );
-  if (!brief || !sector || !zone) {
-    return { ok: false, code: "validation", error: "Brief, secteur et zone sont obligatoires." };
+  if (!brief) {
+    return { ok: false, code: "validation", error: "Ajoute au moins une instruction courte pour lancer la recherche." };
   }
 
   const providerStatus = await getSearchProviderStatus();
@@ -4694,7 +5017,8 @@ async function processSourcingLiveSession(sessionId: string) {
         agentKey: agent.agentKey,
         sessionId: session.id,
         cycleIndex,
-        dedupeKeys: liveKeys
+        dedupeKeys: liveKeys,
+        brief: session.brief ?? ""
       });
 
       if (result.ok) {
@@ -5302,11 +5626,32 @@ saasRouter.patch("/admin/sourcing/global-agents/:agentKey", async (req, res, nex
       defaultSector: typeof req.body?.defaultSector === "string" ? req.body.defaultSector : agent.defaultSector,
       defaultZone: typeof req.body?.defaultZone === "string" ? req.body.defaultZone : agent.defaultZone,
       defaultTargetCount: typeof req.body?.defaultTargetCount === "number" ? req.body.defaultTargetCount : agent.defaultTargetCount,
+      systemPrompt: typeof req.body?.systemPrompt === "string" ? req.body.systemPrompt : agent.systemPrompt,
+      personality: typeof req.body?.personality === "string" ? req.body.personality : agent.personality,
+      identity: typeof req.body?.identity === "string" ? req.body.identity : agent.identity,
+      userContext: typeof req.body?.userContext === "string" ? req.body.userContext : agent.userContext,
+      allowedTools: Array.isArray(req.body?.allowedTools)
+        ? req.body.allowedTools.map(String).map((entry: string) => entry.trim()).filter(Boolean)
+        : agent.allowedTools,
       updatedAt
     };
 
     await saveGlobalAgents(current.map((a) => (a.agentKey === agentKey ? updated : a)));
     res.json({ ok: true, agent: updated });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.post("/admin/sourcing/global-agents/:agentKey/reapply", async (req, res, next) => {
+  try {
+    const agentKey = req.params.agentKey;
+    if (agentKey !== "sourcing-serper" && agentKey !== "sourcing-tavily") {
+      return res.status(400).json({ error: "Cle agent globale invalide." });
+    }
+
+    const updatedProfiles = await reapplyGlobalAgentTemplateToExistingProfiles(agentKey);
+    res.json({ ok: true, updatedProfiles });
   } catch (error) {
     next(error);
   }

@@ -730,6 +730,7 @@ function GlobalAgentsTab() {
   const [agents, setAgents] = useState<SourcingGlobalAgent[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
   const [forms, setForms] = useState<Record<string, Partial<SourcingGlobalAgent>>>({});
+  const [editorSections, setEditorSections] = useState<Record<string, "mission" | "brain">>({});
 
   useEffect(() => {
     void loadAgents();
@@ -787,12 +788,30 @@ function GlobalAgentsTab() {
     }
   }
 
+  async function reapplyTemplate(agentKey: string) {
+    try {
+      setSavingKey(`${agentKey}:reapply`);
+      const r = await fetch(`${apiBaseUrl}/api/sourcing/admin/sourcing/global-agents/${agentKey}/reapply`, {
+        method: "POST",
+        credentials: "include"
+      });
+      const data = (await r.json()) as { ok: boolean; updatedProfiles?: number; error?: string };
+      if (!data.ok) throw new Error(data.error ?? "Erreur.");
+      setError(`Template reapplique sur ${data.updatedProfiles ?? 0} compte(s) existant(s).`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur lors de la resynchronisation.");
+    } finally {
+      setSavingKey(null);
+    }
+  }
+
   function startEdit(agent: SourcingGlobalAgent) {
     setForms((prev) => ({ ...prev, [agent.agentKey]: { ...agent } }));
     setEditing(agent.agentKey);
+    setEditorSections((prev) => ({ ...prev, [agent.agentKey]: "mission" }));
   }
 
-  function updateForm(agentKey: string, field: string, value: string | number) {
+  function updateForm<K extends keyof SourcingGlobalAgent>(agentKey: string, field: K, value: SourcingGlobalAgent[K]) {
     setForms((prev) => ({ ...prev, [agentKey]: { ...prev[agentKey], [field]: value } }));
   }
 
@@ -805,7 +824,7 @@ function GlobalAgentsTab() {
       <div>
         <p className="font-semibold text-zinc-100">Configuration globale des agents</p>
         <p className="mt-1 text-sm text-zinc-500">
-          Parametres par defaut appliques a chaque nouveau compte sourcing. Tu peux toujours surcharger par compte.
+          Parametres par defaut appliques a chaque nouveau compte sourcing. Tu peux reappliquer les templates aux comptes existants quand tu veux resynchroniser Serper et Tavily.
         </p>
       </div>
 
@@ -814,7 +833,10 @@ function GlobalAgentsTab() {
           const isEditing = editing === agent.agentKey;
           const form = forms[agent.agentKey] ?? agent;
           const isSaving = savingKey === agent.agentKey;
+          const isReapplying = savingKey === `${agent.agentKey}:reapply`;
           const isSerper = agent.source === "serper";
+          const editorSection = editorSections[agent.agentKey] ?? "mission";
+          const toolsValue = Array.isArray(form.allowedTools) ? form.allowedTools.join(", ") : "";
 
           return (
             <article
@@ -853,6 +875,20 @@ function GlobalAgentsTab() {
 
               {isEditing ? (
                 <div className="mt-5 space-y-4">
+                  <div className="inline-flex rounded-2xl border border-line bg-ink p-1">
+                    {(["mission", "brain"] as const).map((section) => (
+                      <button
+                        key={section}
+                        type="button"
+                        onClick={() => setEditorSections((prev) => ({ ...prev, [agent.agentKey]: section }))}
+                        className={`rounded-xl px-4 py-2 text-xs font-semibold transition ${
+                          editorSection === section ? "bg-gold text-black" : "text-zinc-400 hover:text-zinc-200"
+                        }`}
+                      >
+                        {section === "mission" ? "Mission" : "Cerveau"}
+                      </button>
+                    ))}
+                  </div>
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Nom affiche</label>
                     <input
@@ -875,59 +911,118 @@ function GlobalAgentsTab() {
                     </select>
                     <p className="mt-1 text-xs text-zinc-600">Modele applique a tous les abonnes de cet agent.</p>
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Mots-cles par defaut</label>
-                    <input
-                      type="text"
-                      placeholder="Ex: agence web, consultant marketing..."
-                      value={String(form.defaultKeywords ?? "")}
-                      onChange={(e) => updateForm(agent.agentKey, "defaultKeywords", e.target.value)}
-                      className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-gold/40 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Instructions de qualification</label>
-                    <textarea
-                      rows={3}
-                      placeholder="Ex: Chercher des entreprises de 10-50 employes..."
-                      value={String(form.qualificationInstructions ?? "")}
-                      onChange={(e) => updateForm(agent.agentKey, "qualificationInstructions", e.target.value)}
-                      className="mt-2 w-full resize-none rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-gold/40 focus:outline-none"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Secteur par defaut</label>
-                      <input
-                        type="text"
-                        placeholder="Ex: Tech, Commerce..."
-                        value={String(form.defaultSector ?? "")}
-                        onChange={(e) => updateForm(agent.agentKey, "defaultSector", e.target.value)}
-                        className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-gold/40 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Zone par defaut</label>
-                      <input
-                        type="text"
-                        placeholder="Ex: Dakar, Abidjan..."
-                        value={String(form.defaultZone ?? "")}
-                        onChange={(e) => updateForm(agent.agentKey, "defaultZone", e.target.value)}
-                        className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-gold/40 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Prospects cibles / run</label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={100}
-                        value={Number(form.defaultTargetCount ?? 20)}
-                        onChange={(e) => updateForm(agent.agentKey, "defaultTargetCount", Number(e.target.value))}
-                        className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 focus:border-gold/40 focus:outline-none"
-                      />
-                    </div>
-                  </div>
+                  {editorSection === "mission" ? (
+                    <>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Mots-cles par defaut</label>
+                        <input
+                          type="text"
+                          placeholder="Ex: agence web, consultant marketing..."
+                          value={String(form.defaultKeywords ?? "")}
+                          onChange={(e) => updateForm(agent.agentKey, "defaultKeywords", e.target.value)}
+                          className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-gold/40 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Instructions de qualification</label>
+                        <textarea
+                          rows={4}
+                          placeholder="Ex: Chercher des entreprises de 10-50 employes..."
+                          value={String(form.qualificationInstructions ?? "")}
+                          onChange={(e) => updateForm(agent.agentKey, "qualificationInstructions", e.target.value)}
+                          className="mt-2 w-full resize-none rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-gold/40 focus:outline-none"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Secteur par defaut</label>
+                          <input
+                            type="text"
+                            placeholder="Ex: Tech, Commerce..."
+                            value={String(form.defaultSector ?? "")}
+                            onChange={(e) => updateForm(agent.agentKey, "defaultSector", e.target.value)}
+                            className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-gold/40 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Zone par defaut</label>
+                          <input
+                            type="text"
+                            placeholder="Ex: Dakar, Abidjan..."
+                            value={String(form.defaultZone ?? "")}
+                            onChange={(e) => updateForm(agent.agentKey, "defaultZone", e.target.value)}
+                            className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-gold/40 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Prospects cibles / run</label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={Number(form.defaultTargetCount ?? 20)}
+                            onChange={(e) => updateForm(agent.agentKey, "defaultTargetCount", Number(e.target.value))}
+                            className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 focus:border-gold/40 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">System prompt</label>
+                        <textarea
+                          rows={4}
+                          value={String(form.systemPrompt ?? "")}
+                          onChange={(e) => updateForm(agent.agentKey, "systemPrompt", e.target.value)}
+                          className="mt-2 w-full resize-none rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 focus:border-gold/40 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Personnalite</label>
+                        <textarea
+                          rows={3}
+                          value={String(form.personality ?? "")}
+                          onChange={(e) => updateForm(agent.agentKey, "personality", e.target.value)}
+                          className="mt-2 w-full resize-none rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 focus:border-gold/40 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Identite</label>
+                        <textarea
+                          rows={3}
+                          value={String(form.identity ?? "")}
+                          onChange={(e) => updateForm(agent.agentKey, "identity", e.target.value)}
+                          className="mt-2 w-full resize-none rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 focus:border-gold/40 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Contexte utilisateur</label>
+                        <textarea
+                          rows={3}
+                          value={String(form.userContext ?? "")}
+                          onChange={(e) => updateForm(agent.agentKey, "userContext", e.target.value)}
+                          className="mt-2 w-full resize-none rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 focus:border-gold/40 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Outils autorises</label>
+                        <input
+                          type="text"
+                          placeholder="Ex: web_search, page_scrape, company_lookup"
+                          value={toolsValue}
+                          onChange={(e) =>
+                            updateForm(
+                              agent.agentKey,
+                              "allowedTools",
+                              e.target.value.split(",").map((item) => item.trim()).filter(Boolean)
+                            )
+                          }
+                          className="mt-2 w-full rounded-xl border border-line bg-ink px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-gold/40 focus:outline-none"
+                        />
+                      </div>
+                    </>
+                  )}
                   <div className="flex gap-3 pt-1">
                     <button
                       type="button"
@@ -937,6 +1032,15 @@ function GlobalAgentsTab() {
                     >
                       {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                       Sauvegarder
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void reapplyTemplate(agent.agentKey)}
+                      disabled={isReapplying}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-line px-4 text-xs font-semibold text-zinc-300 hover:border-gold/30 disabled:opacity-50"
+                    >
+                      {isReapplying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                      Reappliquer aux comptes existants
                     </button>
                     <button
                       type="button"
@@ -959,16 +1063,28 @@ function GlobalAgentsTab() {
                   {agent.defaultSector && <p><span className="text-zinc-400">Secteur:</span> {agent.defaultSector}</p>}
                   {agent.defaultZone && <p><span className="text-zinc-400">Zone:</span> {agent.defaultZone}</p>}
                   <p><span className="text-zinc-400">Cible par run:</span> {agent.defaultTargetCount} prospects</p>
+                  {agent.allowedTools.length ? <p><span className="text-zinc-400">Outils:</span> {agent.allowedTools.join(", ")}</p> : null}
                   {!agent.defaultKeywords && !agent.defaultSector && !agent.defaultZone && (
                     <p className="italic text-zinc-600">Aucune configuration specifique — valeurs par defaut actives.</p>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => startEdit(agent)}
-                    className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-xl border border-line bg-ink px-3 text-xs font-semibold text-zinc-300 hover:border-gold/40"
-                  >
-                    <Edit2 className="h-3.5 w-3.5" /> Configurer
-                  </button>
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => startEdit(agent)}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-line bg-ink px-3 text-xs font-semibold text-zinc-300 hover:border-gold/40"
+                    >
+                      <Edit2 className="h-3.5 w-3.5" /> Configurer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void reapplyTemplate(agent.agentKey)}
+                      disabled={isReapplying}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-line px-3 text-xs font-semibold text-zinc-300 hover:border-gold/30 disabled:opacity-50"
+                    >
+                      {isReapplying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                      Reappliquer
+                    </button>
+                  </div>
                 </div>
               )}
             </article>

@@ -189,6 +189,8 @@ export type UserSourcingLiveSession = {
   updatedAt: string;
   stoppedAt: string | null;
   activeAgentKeys: string[];
+  pausedAgentKeys: string[];
+  brief: string;
   stopReason: string | null;
   cycleCount: number;
   lastCycleAt: string | null;
@@ -346,6 +348,11 @@ export type SourcingGlobalAgent = {
   defaultSector: string;
   defaultZone: string;
   defaultTargetCount: number;
+  systemPrompt: string;
+  personality: string;
+  identity: string;
+  userContext: string;
+  allowedTools: string[];
   updatedAt: string;
 };
 
