@@ -64,19 +64,77 @@ type LivePayload = {
 
 type AgentPayload = AgentConfig[] | { agents?: AgentConfig[] };
 
-type SavePayload = Partial<
-  Pick<
-    AgentConfig,
-    | "name"
-    | "enabled"
-    | "source"
-    | "keywords"
-    | "instructions"
-    | "defaultSector"
-    | "defaultZone"
-    | "defaultTargetCount"
-  >
->;
+type SavePayload = {
+  displayName?: string;
+  isEnabled?: boolean;
+  missionConfig?: {
+    source?: string | null;
+    keywords?: string | null;
+    qualificationInstructions?: string | null;
+    defaultSector?: string | null;
+    defaultZone?: string | null;
+    defaultTargetCount?: number | null;
+  };
+};
+
+type ApiAgentPayload = {
+  id: string;
+  agentKey: string;
+  displayName?: string | null;
+  isEnabled?: boolean;
+  missionConfig?: {
+    source?: string | null;
+    keywords?: string | null;
+    qualificationInstructions?: string | null;
+    defaultSector?: string | null;
+    defaultZone?: string | null;
+    defaultTargetCount?: number | null;
+  } | null;
+  metrics?: AgentMetrics;
+};
+
+function normalizeAgent(payload: AgentConfig | ApiAgentPayload): AgentConfig {
+  const missionConfig = "missionConfig" in payload ? payload.missionConfig : null;
+  return {
+    id: payload.id,
+    agentKey: payload.agentKey,
+    name:
+      ("name" in payload && typeof payload.name === "string" && payload.name.trim()) ||
+      ("displayName" in payload && typeof payload.displayName === "string" && payload.displayName.trim()) ||
+      agentLabel(payload.agentKey),
+    enabled:
+      ("enabled" in payload && typeof payload.enabled === "boolean"
+        ? payload.enabled
+        : "isEnabled" in payload && typeof payload.isEnabled === "boolean"
+          ? payload.isEnabled
+          : true),
+    source:
+      ("source" in payload && typeof payload.source === "string"
+        ? payload.source
+        : missionConfig?.source) ?? null,
+    keywords:
+      ("keywords" in payload && typeof payload.keywords === "string"
+        ? payload.keywords
+        : missionConfig?.keywords) ?? null,
+    instructions:
+      ("instructions" in payload && typeof payload.instructions === "string"
+        ? payload.instructions
+        : missionConfig?.qualificationInstructions) ?? null,
+    defaultSector:
+      ("defaultSector" in payload && typeof payload.defaultSector === "string"
+        ? payload.defaultSector
+        : missionConfig?.defaultSector) ?? null,
+    defaultZone:
+      ("defaultZone" in payload && typeof payload.defaultZone === "string"
+        ? payload.defaultZone
+        : missionConfig?.defaultZone) ?? null,
+    defaultTargetCount:
+      ("defaultTargetCount" in payload && typeof payload.defaultTargetCount === "number"
+        ? payload.defaultTargetCount
+        : missionConfig?.defaultTargetCount) ?? null,
+    metrics: payload.metrics,
+  };
+}
 
 function agentLabel(agentKey: string) {
   if (agentKey === "sourcing-serper") {
@@ -181,12 +239,13 @@ async function patchJson<T>(url: string, body: unknown): Promise<T> {
 
 function isConfigured(agent: AgentConfig) {
   return Boolean(
-    agent.source &&
-      agent.keywords &&
-      agent.instructions &&
-      agent.defaultSector &&
-      agent.defaultZone &&
-      agent.defaultTargetCount,
+    agent.source?.trim() &&
+      agent.keywords?.trim() &&
+      agent.instructions?.trim() &&
+      agent.defaultSector?.trim() &&
+      agent.defaultZone?.trim() &&
+      typeof agent.defaultTargetCount === "number" &&
+      agent.defaultTargetCount > 0,
   );
 }
 
@@ -261,7 +320,8 @@ export default function UserAgentsPage() {
         fetchJson<LivePayload>("/api/sourcing/agents/live"),
       ]);
 
-      setAgents(Array.isArray(agentsPayload) ? agentsPayload : agentsPayload.agents ?? []);
+      const rawAgents = Array.isArray(agentsPayload) ? agentsPayload : agentsPayload.agents ?? [];
+      setAgents(rawAgents.map((item) => normalizeAgent(item as AgentConfig | ApiAgentPayload)));
       setLive(livePayload);
       setError(null);
     } catch (err) {
@@ -624,14 +684,16 @@ function AgentConfigModal({
             disabled={saving}
             onClick={() =>
               onSave({
-                name,
-                source,
-                keywords,
-                instructions,
-                defaultSector,
-                defaultZone,
-                defaultTargetCount: Number.parseInt(defaultTargetCount, 10) || 10,
-                enabled,
+                displayName: name,
+                isEnabled: enabled,
+                missionConfig: {
+                  source,
+                  keywords,
+                  qualificationInstructions: instructions,
+                  defaultSector,
+                  defaultZone,
+                  defaultTargetCount: Number.parseInt(defaultTargetCount, 10) || 10,
+                },
               })
             }
             className="rounded-2xl bg-amber-400 px-5 py-3 text-sm font-semibold text-black disabled:bg-zinc-700 disabled:text-zinc-400"
