@@ -106,6 +106,13 @@ export type SaasAgentProfile = {
   requireApproval: boolean;
   allowedTools: string[];
   missionConfig: SourcingMissionConfig;
+  metrics?: {
+    runs: number;
+    prospects: number;
+    conversions: number;
+    sources: number;
+    lastRunAt: string | null;
+  };
   updatedAt: string;
 };
 
@@ -139,6 +146,8 @@ export type SaasSourcingRun = {
   id: string;
   companyId: string;
   moduleKey: "sourcing-commercial";
+  sessionId?: string;
+  cycleIndex?: number;
   agentKey: string;
   agentName: string;
   objective: string;
@@ -166,6 +175,37 @@ export type SaasSourcingRun = {
     crmLeadId?: string;
   }>;
   error?: string;
+  createdAt: string;
+};
+
+export type UserSourcingLiveSessionStatus = "idle" | "running" | "paused" | "stopped" | "blocked" | "completed";
+
+export type UserSourcingLiveSession = {
+  id: string;
+  companyId: string;
+  moduleKey: "sourcing-commercial";
+  status: UserSourcingLiveSessionStatus;
+  startedAt: string;
+  updatedAt: string;
+  stoppedAt: string | null;
+  activeAgentKeys: string[];
+  stopReason: string | null;
+  cycleCount: number;
+  lastCycleAt: string | null;
+  currentAgentKey: string | null;
+};
+
+export type UserSourcingLiveEvent = {
+  id: string;
+  sessionId: string;
+  companyId: string;
+  agentKey: string | null;
+  agentName: string | null;
+  type: "session_started" | "session_stopped" | "session_paused" | "session_resumed" | "cycle_started" | "cycle_completed" | "prospects_retained" | "prospect_rejected" | "quota_reached" | "provider_error" | "agent_blocked" | "no_results";
+  level: "info" | "success" | "warning" | "error";
+  message: string;
+  runId: string | null;
+  prospectCount: number | null;
   createdAt: string;
 };
 
@@ -334,6 +374,18 @@ export type UserSourcingSubscriptionView = {
   subscription: SaasSubscription | null;
   currentPlan: SourcingPlan | null;
   latestRequest: UserPaymentRequest | null;
+};
+
+export type UserSourcingLiveWorkspace = {
+  session: UserSourcingLiveSession | null;
+  feed: UserSourcingLiveEvent[];
+  quota: {
+    planName: string | null;
+    maxRunsPerMonth: number | null;
+    maxProspectsPerRun: number | null;
+    runsThisMonth: number;
+    runsRemaining: number | null;
+  };
 };
 
 export function formatMoney(value: number, currency = "FCFA") {

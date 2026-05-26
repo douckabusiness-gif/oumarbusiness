@@ -13,6 +13,7 @@ import { startEmailIncomingPoller } from "./jobs/emailIncomingPoller.js";
 import { startProjectDeadlinePoller } from "./jobs/projectDeadlinePoller.js";
 import { startNightReportJob } from "./jobs/nightReportJob.js";
 import { startBaileysAutoReconnect } from "./routes/modules/whatsapp.js";
+import { initializeSourcingLiveSessions } from "./routes/modules/saas.js";
 
 const defaultAppUrl = "http://localhost:1010";
 const defaultLocalOrigins = [defaultAppUrl, "http://127.0.0.1:1010"];
@@ -109,6 +110,7 @@ async function start() {
   startEmailIncomingPoller();
   startProjectDeadlinePoller();
   startNightReportJob();
+  await initializeSourcingLiveSessions();
 
   httpServer.listen(port, () => {
     logger.info({ port }, "Oumar API started");

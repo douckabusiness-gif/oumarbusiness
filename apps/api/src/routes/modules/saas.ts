@@ -21,6 +21,8 @@ const SAAS_SUBSCRIPTIONS_KEY = "saas_subscriptions";
 const SAAS_INVOICES_KEY = "saas_invoices";
 const SAAS_CRM_LEADS_KEY = "saas_crm_leads";
 const SAAS_SOURCING_RUNS_KEY = "saas_sourcing_runs";
+const SAAS_SOURCING_LIVE_SESSIONS_KEY = "saas_sourcing_live_sessions";
+const SAAS_SOURCING_LIVE_EVENTS_KEY = "saas_sourcing_live_events";
 const SAAS_WHATSAPP_ACTIVITY_KEY = "saas_whatsapp_activity";
 const SAAS_WHATSAPP_BINDINGS_KEY = "saas_whatsapp_bindings";
 const SAAS_WHATSAPP_META_CONFIGS_KEY = "saas_whatsapp_meta_configs";
@@ -72,6 +74,20 @@ type SubscriptionStatus = "trial" | "active" | "past_due" | "paused" | "cancelle
 type InvoiceStatus = "draft" | "sent" | "paid" | "overdue";
 type LeadStatus = "new" | "warm" | "hot" | "won";
 type SourcingRunStatus = "draft" | "running" | "completed";
+type SourcingLiveSessionStatus = "idle" | "running" | "paused" | "stopped" | "blocked" | "completed";
+type SourcingLiveEventType =
+  | "session_started"
+  | "session_stopped"
+  | "session_paused"
+  | "session_resumed"
+  | "cycle_started"
+  | "cycle_completed"
+  | "prospects_retained"
+  | "prospect_rejected"
+  | "quota_reached"
+  | "provider_error"
+  | "agent_blocked"
+  | "no_results";
 type WhatsAppConversationStatus = "open" | "pending" | "qualified";
 type WhatsAppSessionMode = "baileys" | "cloud";
 type SearchProviderMode = "live" | "waiting_api";
@@ -205,6 +221,8 @@ type SaasSourcingRun = {
   id: string;
   companyId: string;
   moduleKey: Extract<ModuleKey, "sourcing-commercial">;
+  sessionId?: string;
+  cycleIndex?: number;
   agentKey: string;
   agentName: string;
   objective: string;
@@ -232,6 +250,35 @@ type SaasSourcingRun = {
     crmLeadId?: string;
   }>;
   error?: string;
+  createdAt: string;
+};
+
+type SaasSourcingSession = {
+  id: string;
+  companyId: string;
+  moduleKey: Extract<ModuleKey, "sourcing-commercial">;
+  status: SourcingLiveSessionStatus;
+  startedAt: string;
+  updatedAt: string;
+  stoppedAt?: string;
+  activeAgentKeys: string[];
+  stopReason?: string;
+  cycleCount: number;
+  lastCycleAt?: string;
+  currentAgentKey?: string;
+};
+
+type SaasSourcingLiveEvent = {
+  id: string;
+  sessionId: string;
+  companyId: string;
+  agentKey?: string;
+  agentName?: string;
+  type: SourcingLiveEventType;
+  level: "info" | "success" | "warning" | "error";
+  message: string;
+  runId?: string;
+  prospectCount?: number;
   createdAt: string;
 };
 
@@ -682,6 +729,8 @@ function parseSourcingRun(value: unknown): SaasSourcingRun | null {
   const moduleKey = typeof value.moduleKey === "string" ? value.moduleKey : "";
   const agentKey = typeof value.agentKey === "string" ? value.agentKey : "";
   const agentName = typeof value.agentName === "string" ? value.agentName : "";
+  const sessionId = typeof value.sessionId === "string" ? value.sessionId : undefined;
+  const cycleIndex = typeof value.cycleIndex === "number" ? value.cycleIndex : undefined;
   const objective = typeof value.objective === "string" ? value.objective : "";
   const brief = typeof value.brief === "string" ? value.brief : "";
   const sector = typeof value.sector === "string" ? value.sector : "";
@@ -749,6 +798,8 @@ function parseSourcingRun(value: unknown): SaasSourcingRun | null {
     id,
     companyId,
     moduleKey,
+    ...(sessionId ? { sessionId } : {}),
+    ...(typeof cycleIndex === "number" ? { cycleIndex } : {}),
     agentKey,
     agentName,
     objective,
@@ -762,6 +813,73 @@ function parseSourcingRun(value: unknown): SaasSourcingRun | null {
     providers,
     prospects,
     error,
+    createdAt
+  };
+}
+
+function parseSourcingSession(value: unknown): SaasSourcingSession | null {
+  if (!isObject(value)) return null;
+  const id = typeof value.id === "string" ? value.id : "";
+  const companyId = typeof value.companyId === "string" ? value.companyId : "";
+  const moduleKey = typeof value.moduleKey === "string" ? value.moduleKey : "";
+  const status = typeof value.status === "string" ? value.status : "";
+  const startedAt = typeof value.startedAt === "string" ? value.startedAt : "";
+  const updatedAt = typeof value.updatedAt === "string" ? value.updatedAt : "";
+  const stoppedAt = typeof value.stoppedAt === "string" ? value.stoppedAt : undefined;
+  const activeAgentKeys = Array.isArray(value.activeAgentKeys) ? value.activeAgentKeys.map(String).map((item) => item.trim()).filter(Boolean) : [];
+  const stopReason = typeof value.stopReason === "string" ? value.stopReason : undefined;
+  const cycleCount = typeof value.cycleCount === "number" ? value.cycleCount : 0;
+  const lastCycleAt = typeof value.lastCycleAt === "string" ? value.lastCycleAt : undefined;
+  const currentAgentKey = typeof value.currentAgentKey === "string" ? value.currentAgentKey : undefined;
+  if (!id || !companyId || moduleKey !== "sourcing-commercial" || !isSourcingLiveSessionStatus(status) || !startedAt || !updatedAt) {
+    return null;
+  }
+  return {
+    id,
+    companyId,
+    moduleKey,
+    status,
+    startedAt,
+    updatedAt,
+    ...(stoppedAt ? { stoppedAt } : {}),
+    activeAgentKeys,
+    ...(stopReason ? { stopReason } : {}),
+    cycleCount,
+    ...(lastCycleAt ? { lastCycleAt } : {}),
+    ...(currentAgentKey ? { currentAgentKey } : {})
+  };
+}
+
+function parseSourcingLiveEvent(value: unknown): SaasSourcingLiveEvent | null {
+  if (!isObject(value)) return null;
+  const id = typeof value.id === "string" ? value.id : "";
+  const sessionId = typeof value.sessionId === "string" ? value.sessionId : "";
+  const companyId = typeof value.companyId === "string" ? value.companyId : "";
+  const agentKey = typeof value.agentKey === "string" ? value.agentKey : undefined;
+  const agentName = typeof value.agentName === "string" ? value.agentName : undefined;
+  const type = typeof value.type === "string" ? value.type : "";
+  const level =
+    value.level === "success" || value.level === "warning" || value.level === "error" || value.level === "info"
+      ? value.level
+      : null;
+  const message = typeof value.message === "string" ? value.message : "";
+  const runId = typeof value.runId === "string" ? value.runId : undefined;
+  const prospectCount = typeof value.prospectCount === "number" ? value.prospectCount : undefined;
+  const createdAt = typeof value.createdAt === "string" ? value.createdAt : "";
+  if (!id || !sessionId || !companyId || !isSourcingLiveEventType(type) || !level || !message || !createdAt) {
+    return null;
+  }
+  return {
+    id,
+    sessionId,
+    companyId,
+    ...(agentKey ? { agentKey } : {}),
+    ...(agentName ? { agentName } : {}),
+    type,
+    level,
+    message,
+    ...(runId ? { runId } : {}),
+    ...(typeof prospectCount === "number" ? { prospectCount } : {}),
     createdAt
   };
 }
@@ -885,6 +1003,27 @@ function isSourcingRunStatus(value: string): value is SourcingRunStatus {
   return ["draft", "running", "completed"].includes(value);
 }
 
+function isSourcingLiveSessionStatus(value: string): value is SourcingLiveSessionStatus {
+  return ["idle", "running", "paused", "stopped", "blocked", "completed"].includes(value);
+}
+
+function isSourcingLiveEventType(value: string): value is SourcingLiveEventType {
+  return [
+    "session_started",
+    "session_stopped",
+    "session_paused",
+    "session_resumed",
+    "cycle_started",
+    "cycle_completed",
+    "prospects_retained",
+    "prospect_rejected",
+    "quota_reached",
+    "provider_error",
+    "agent_blocked",
+    "no_results"
+  ].includes(value);
+}
+
 function isWhatsAppConversationStatus(value: string): value is WhatsAppConversationStatus {
   return ["open", "pending", "qualified"].includes(value);
 }
@@ -896,6 +1035,12 @@ function slugifyCompanyName(value: string) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
+}
+
+function agentRank(agentKey: string) {
+  if (agentKey === "sourcing-serper") return 0;
+  if (agentKey === "sourcing-tavily") return 1;
+  return 2;
 }
 
 function addDays(source: string | Date, days: number) {
@@ -1112,6 +1257,10 @@ const loadCrmLeads = () => loadStoredArray(SAAS_CRM_LEADS_KEY, parseLead);
 const saveCrmLeads = (items: SaasCrmLead[]) => saveStoredArray(SAAS_CRM_LEADS_KEY, items);
 const loadSourcingRuns = () => loadStoredArray(SAAS_SOURCING_RUNS_KEY, parseSourcingRun);
 const saveSourcingRuns = (items: SaasSourcingRun[]) => saveStoredArray(SAAS_SOURCING_RUNS_KEY, items);
+const loadSourcingLiveSessions = () => loadStoredArray(SAAS_SOURCING_LIVE_SESSIONS_KEY, parseSourcingSession);
+const saveSourcingLiveSessions = (items: SaasSourcingSession[]) => saveStoredArray(SAAS_SOURCING_LIVE_SESSIONS_KEY, items);
+const loadSourcingLiveEvents = () => loadStoredArray(SAAS_SOURCING_LIVE_EVENTS_KEY, parseSourcingLiveEvent);
+const saveSourcingLiveEvents = (items: SaasSourcingLiveEvent[]) => saveStoredArray(SAAS_SOURCING_LIVE_EVENTS_KEY, items);
 const loadWhatsAppActivity = () => loadStoredArray(SAAS_WHATSAPP_ACTIVITY_KEY, parseWhatsAppActivity);
 const saveWhatsAppActivity = (items: SaasWhatsAppActivity[]) => saveStoredArray(SAAS_WHATSAPP_ACTIVITY_KEY, items);
 const loadWhatsAppBindings = () => loadStoredArray(SAAS_WHATSAPP_BINDINGS_KEY, parseWhatsAppBinding);
@@ -1131,6 +1280,124 @@ async function loadSessions() {
 
 async function saveSessions(items: SaasSession[]) {
   await saveStoredArray(SAAS_SESSIONS_KEY, items);
+}
+
+const sourcingLiveTimers = new Map<string, NodeJS.Timeout>();
+const sourcingLiveLocks = new Set<string>();
+const SOURCING_LIVE_INTERVAL_MS = Math.max(Number(process.env.SOURCING_LIVE_INTERVAL_MS ?? 15000), 5000);
+const SOURCING_LIVE_EVENTS_LIMIT = 300;
+
+function getCurrentMonthStartIso() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+}
+
+function buildProspectDedupKey(prospect: { website?: string; company?: string; name?: string }) {
+  return normalizeSearchText(prospect.website || prospect.company || prospect.name || "");
+}
+
+function getCurrentLiveSession(sessions: SaasSourcingSession[]) {
+  return (
+    sessions
+      .filter((session) => session.status === "running" || session.status === "paused")
+      .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())[0] ?? null
+  );
+}
+
+async function appendSourcingLiveEvent(event: SaasSourcingLiveEvent) {
+  const events = await loadSourcingLiveEvents();
+  const nextEvents = [event, ...events]
+    .filter((entry, index, collection) => index === collection.findIndex((candidate) => candidate.id === entry.id))
+    .slice(0, SOURCING_LIVE_EVENTS_LIMIT);
+  await saveSourcingLiveEvents(nextEvents);
+}
+
+async function saveSourcingLiveSession(session: SaasSourcingSession) {
+  const sessions = await loadSourcingLiveSessions();
+  const nextSessions = [session, ...sessions.filter((item) => item.id !== session.id)];
+  await saveSourcingLiveSessions(nextSessions);
+}
+
+async function updateSourcingLiveSession(
+  sessionId: string,
+  mutate: (session: SaasSourcingSession) => SaasSourcingSession | null
+) {
+  const sessions = await loadSourcingLiveSessions();
+  const current = sessions.find((session) => session.id === sessionId) ?? null;
+  if (!current) return null;
+  const next = mutate(current);
+  if (!next) return null;
+  const nextSessions = sessions.map((session) => (session.id === sessionId ? next : session));
+  await saveSourcingLiveSessions(nextSessions);
+  return next;
+}
+
+function clearSourcingLiveTimer(sessionId: string) {
+  const timer = sourcingLiveTimers.get(sessionId);
+  if (timer) clearTimeout(timer);
+  sourcingLiveTimers.delete(sessionId);
+}
+
+function scheduleSourcingLiveTick(sessionId: string, delayMs = SOURCING_LIVE_INTERVAL_MS) {
+  clearSourcingLiveTimer(sessionId);
+  const timer = setTimeout(() => {
+    void processSourcingLiveSession(sessionId);
+  }, delayMs);
+  sourcingLiveTimers.set(sessionId, timer);
+}
+
+async function resolveSourcingPlanLimits(subscription: SaasSubscription | null) {
+  if (!subscription) return null;
+  const allPlans = await loadSourcingPlans();
+  const subPlanName = (subscription as { planName?: string }).planName ?? "";
+  const matchedPlan = allPlans.find((plan) => plan.name.toLowerCase() === subPlanName.toLowerCase() || plan.id === subPlanName) ?? null;
+  if (!matchedPlan) return null;
+  return {
+    planName: matchedPlan.name,
+    maxRunsPerMonth: matchedPlan.maxRunsPerMonth,
+    maxProspectsPerRun: matchedPlan.maxProspectsPerRun
+  };
+}
+
+function computeSourcingQuota(runs: SaasSourcingRun[], planLimits: { planName: string; maxRunsPerMonth: number; maxProspectsPerRun: number } | null) {
+  const monthStart = getCurrentMonthStartIso();
+  const runsThisMonth = runs.filter((run) => run.createdAt >= monthStart).length;
+  return {
+    planName: planLimits?.planName ?? null,
+    maxRunsPerMonth: planLimits?.maxRunsPerMonth ?? null,
+    maxProspectsPerRun: planLimits?.maxProspectsPerRun ?? null,
+    runsThisMonth,
+    runsRemaining: planLimits ? Math.max(planLimits.maxRunsPerMonth - runsThisMonth, 0) : null
+  };
+}
+
+async function stopSourcingLiveSession(
+  sessionId: string,
+  status: Extract<SourcingLiveSessionStatus, "stopped" | "blocked" | "completed">,
+  reason: string,
+  eventType: Extract<SourcingLiveEventType, "session_stopped" | "quota_reached" | "provider_error">
+) {
+  clearSourcingLiveTimer(sessionId);
+  const updated = await updateSourcingLiveSession(sessionId, (session) => ({
+    ...session,
+    status,
+    stopReason: reason,
+    stoppedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    currentAgentKey: undefined
+  }));
+  if (updated) {
+    await appendSourcingLiveEvent({
+      id: randomUUID(),
+      sessionId: updated.id,
+      companyId: updated.companyId,
+      type: eventType,
+      level: status === "blocked" ? "warning" : "info",
+      message: reason,
+      createdAt: new Date().toISOString()
+    });
+  }
+  return updated;
 }
 
 function createDefaultAgentProfile(
@@ -2167,7 +2434,13 @@ function isLegacySeedActivity(activity: SaasWhatsAppActivity, company: SaasCompa
 }
 
 async function loadCompanyModuleData(company: SaasCompany) {
-  const [allLeads, allRuns, allActivity] = await Promise.all([loadCrmLeads(), loadSourcingRuns(), loadWhatsAppActivity()]);
+  const [allLeads, allRuns, allSessions, allEvents, allActivity] = await Promise.all([
+    loadCrmLeads(),
+    loadSourcingRuns(),
+    loadSourcingLiveSessions(),
+    loadSourcingLiveEvents(),
+    loadWhatsAppActivity()
+  ]);
 
   const cleanedLeads = allLeads.filter((lead) => !isLegacySeedLead(lead));
   const cleanedRuns = allRuns.filter((run) => !isLegacySeedRun(run));
@@ -2182,6 +2455,8 @@ async function loadCompanyModuleData(company: SaasCompany) {
   return {
     leads: cleanedLeads.filter((lead) => lead.companyId === company.id),
     runs: cleanedRuns.filter((run) => run.companyId === company.id),
+    liveSessions: allSessions.filter((session) => session.companyId === company.id),
+    liveEvents: allEvents.filter((event) => event.companyId === company.id),
     activity: cleanedActivity.filter((entry) => entry.companyId === company.id)
   };
 }
@@ -2279,7 +2554,11 @@ async function sendSourcingVerificationEmail(req: Request, user: SaasUser) {
   } satisfies EmailVerifyToken;
 }
 
-function toPublicAgentProfile(profile: SaasAgentProfile) {
+function toPublicAgentProfile(profile: SaasAgentProfile, runs: SaasSourcingRun[] = []) {
+  const relatedRuns = runs.filter((run) => run.agentKey === profile.agentKey);
+  const lastRun = relatedRuns
+    .slice()
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0] ?? null;
   return {
     id: profile.id,
     companyId: profile.companyId,
@@ -2305,6 +2584,13 @@ function toPublicAgentProfile(profile: SaasAgentProfile) {
     requireApproval: profile.requireApproval,
     allowedTools: profile.allowedTools,
     missionConfig: profile.missionConfig,
+    metrics: {
+      runs: relatedRuns.length,
+      prospects: relatedRuns.reduce((sum, run) => sum + run.foundCount, 0),
+      conversions: relatedRuns.reduce((sum, run) => sum + run.prospects.filter((prospect) => Boolean(prospect.pushedToCrmAt)).length, 0),
+      sources: relatedRuns.length,
+      lastRunAt: lastRun?.createdAt ?? null
+    },
     updatedAt: profile.updatedAt
   };
 }
@@ -2343,6 +2629,39 @@ function toPublicLead(lead: SaasCrmLead) {
 
 function toPublicSourcingRun(run: SaasSourcingRun) {
   return run;
+}
+
+function toPublicSourcingSession(session: SaasSourcingSession) {
+  return {
+    id: session.id,
+    companyId: session.companyId,
+    moduleKey: session.moduleKey,
+    status: session.status,
+    startedAt: session.startedAt,
+    updatedAt: session.updatedAt,
+    stoppedAt: session.stoppedAt ?? null,
+    activeAgentKeys: session.activeAgentKeys,
+    stopReason: session.stopReason ?? null,
+    cycleCount: session.cycleCount,
+    lastCycleAt: session.lastCycleAt ?? null,
+    currentAgentKey: session.currentAgentKey ?? null
+  };
+}
+
+function toPublicSourcingLiveEvent(event: SaasSourcingLiveEvent) {
+  return {
+    id: event.id,
+    sessionId: event.sessionId,
+    companyId: event.companyId,
+    agentKey: event.agentKey ?? null,
+    agentName: event.agentName ?? null,
+    type: event.type,
+    level: event.level,
+    message: event.message,
+    runId: event.runId ?? null,
+    prospectCount: event.prospectCount ?? null,
+    createdAt: event.createdAt
+  };
 }
 
 function toPublicWhatsAppActivity(activity: SaasWhatsAppActivity) {
@@ -3346,8 +3665,226 @@ saasRouter.get("/agents", async (req, res, next) => {
     res.json({
       agents: runtime.profiles
         .filter((item) => allowedModules.has(item.moduleKey))
-        .map(toPublicAgentProfile)
+        .map((item) => toPublicAgentProfile(item, runtime.runs))
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.get("/agents/live", async (req, res, next) => {
+  try {
+    const context = await resolveAuthenticatedContext(req);
+    if (!context) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session utilisateur invalide." });
+    }
+
+    const runtime = await getCompanyRuntime(context.company);
+    const session = getCurrentLiveSession(runtime.liveSessions);
+    const subscription = runtime.subscriptions.find((item) => item.moduleKey === "sourcing-commercial") ?? null;
+    const planLimits = await resolveSourcingPlanLimits(subscription);
+    const quota = computeSourcingQuota(runtime.runs, planLimits);
+    const feed = runtime.liveEvents
+      .filter((event) => !session || event.sessionId === session.id)
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .slice(0, 40);
+
+    res.json({
+      session: session ? toPublicSourcingSession(session) : null,
+      feed: feed.map(toPublicSourcingLiveEvent),
+      quota
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.get("/agents/live/feed", async (req, res, next) => {
+  try {
+    const context = await resolveAuthenticatedContext(req);
+    if (!context) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session utilisateur invalide." });
+    }
+
+    const runtime = await getCompanyRuntime(context.company);
+    const session = getCurrentLiveSession(runtime.liveSessions);
+    const feed = runtime.liveEvents
+      .filter((event) => !session || event.sessionId === session.id)
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .slice(0, 100);
+
+    res.json({
+      session: session ? toPublicSourcingSession(session) : null,
+      feed: feed.map(toPublicSourcingLiveEvent)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.post("/agents/live/start", async (req, res, next) => {
+  try {
+    const context = await resolveAuthenticatedContext(req);
+    if (!context) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session utilisateur invalide." });
+    }
+
+    const runtime = await getCompanyRuntime(context.company);
+    const subscription = runtime.subscriptions.find((item) => item.moduleKey === "sourcing-commercial");
+    if (!subscription || !isAccessibleSubscriptionStatus(subscription.status)) {
+      return res.status(403).json({ error: "Le module sourcing commercial n'est pas actif." });
+    }
+
+    const liveAgents = runtime.profiles
+      .filter((item) => item.moduleKey === "sourcing-commercial" && item.isEnabled)
+      .filter((item) => item.missionConfig.keywords.trim() && item.missionConfig.qualificationInstructions.trim() && item.missionConfig.defaultSector.trim() && item.missionConfig.defaultZone.trim())
+      .sort((left, right) => agentRank(left.agentKey) - agentRank(right.agentKey));
+    if (!liveAgents.length) {
+      return res.status(409).json({ error: "Aucun agent actif n'est pret pour demarrer la session live." });
+    }
+
+    const currentSession = getCurrentLiveSession(runtime.liveSessions);
+    if (currentSession?.status === "running") {
+      return res.json({ ok: true, session: toPublicSourcingSession(currentSession) });
+    }
+
+    if (currentSession?.status === "paused") {
+      const resumed = await updateSourcingLiveSession(currentSession.id, (session) => ({
+        ...session,
+        status: "running",
+        stopReason: undefined,
+        updatedAt: new Date().toISOString(),
+        currentAgentKey: undefined,
+        activeAgentKeys: liveAgents.map((agent) => agent.agentKey)
+      }));
+      if (!resumed) return res.status(404).json({ error: "Session live introuvable." });
+      await appendSourcingLiveEvent({
+        id: randomUUID(),
+        sessionId: resumed.id,
+        companyId: resumed.companyId,
+        type: "session_resumed",
+        level: "info",
+        message: "La session live a repris.",
+        createdAt: new Date().toISOString()
+      });
+      scheduleSourcingLiveTick(resumed.id, 0);
+      return res.json({ ok: true, session: toPublicSourcingSession(resumed) });
+    }
+
+    const now = new Date().toISOString();
+    const session: SaasSourcingSession = {
+      id: randomUUID(),
+      companyId: runtime.company.id,
+      moduleKey: "sourcing-commercial",
+      status: "running",
+      startedAt: now,
+      updatedAt: now,
+      activeAgentKeys: liveAgents.map((agent) => agent.agentKey),
+      cycleCount: 0
+    };
+    await saveSourcingLiveSession(session);
+    await appendSourcingLiveEvent({
+      id: randomUUID(),
+      sessionId: session.id,
+      companyId: session.companyId,
+      type: "session_started",
+      level: "info",
+      message: "Les agents live ont ete demarres.",
+      createdAt: now
+    });
+    scheduleSourcingLiveTick(session.id, 0);
+    res.status(201).json({ ok: true, session: toPublicSourcingSession(session) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.post("/agents/live/stop", async (req, res, next) => {
+  try {
+    const context = await resolveAuthenticatedContext(req);
+    if (!context) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session utilisateur invalide." });
+    }
+
+    const runtime = await getCompanyRuntime(context.company);
+    const session = getCurrentLiveSession(runtime.liveSessions);
+    if (!session) return res.status(404).json({ error: "Aucune session live en cours." });
+    const updated = await stopSourcingLiveSession(session.id, "stopped", "Arret manuel demande par l'utilisateur.", "session_stopped");
+    res.json({ ok: true, session: updated ? toPublicSourcingSession(updated) : null });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.post("/agents/live/pause", async (req, res, next) => {
+  try {
+    const context = await resolveAuthenticatedContext(req);
+    if (!context) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session utilisateur invalide." });
+    }
+
+    const runtime = await getCompanyRuntime(context.company);
+    const session = getCurrentLiveSession(runtime.liveSessions);
+    if (!session || session.status !== "running") return res.status(404).json({ error: "Aucune session live active a mettre en pause." });
+    clearSourcingLiveTimer(session.id);
+    const paused = await updateSourcingLiveSession(session.id, (current) => ({
+      ...current,
+      status: "paused",
+      stopReason: "Session mise en pause par l'utilisateur.",
+      updatedAt: new Date().toISOString(),
+      currentAgentKey: undefined
+    }));
+    if (!paused) return res.status(404).json({ error: "Session live introuvable." });
+    await appendSourcingLiveEvent({
+      id: randomUUID(),
+      sessionId: paused.id,
+      companyId: paused.companyId,
+      type: "session_paused",
+      level: "info",
+      message: "La session live est en pause.",
+      createdAt: new Date().toISOString()
+    });
+    res.json({ ok: true, session: toPublicSourcingSession(paused) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.post("/agents/live/resume", async (req, res, next) => {
+  try {
+    const context = await resolveAuthenticatedContext(req);
+    if (!context) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session utilisateur invalide." });
+    }
+
+    const runtime = await getCompanyRuntime(context.company);
+    const session = getCurrentLiveSession(runtime.liveSessions);
+    if (!session || session.status !== "paused") return res.status(404).json({ error: "Aucune session live en pause a reprendre." });
+    const resumed = await updateSourcingLiveSession(session.id, (current) => ({
+      ...current,
+      status: "running",
+      stopReason: undefined,
+      updatedAt: new Date().toISOString(),
+      currentAgentKey: undefined
+    }));
+    if (!resumed) return res.status(404).json({ error: "Session live introuvable." });
+    await appendSourcingLiveEvent({
+      id: randomUUID(),
+      sessionId: resumed.id,
+      companyId: resumed.companyId,
+      type: "session_resumed",
+      level: "info",
+      message: "La session live a repris.",
+      createdAt: new Date().toISOString()
+    });
+    scheduleSourcingLiveTick(resumed.id, 0);
+    res.json({ ok: true, session: toPublicSourcingSession(resumed) });
   } catch (error) {
     next(error);
   }
@@ -3845,30 +4382,16 @@ saasRouter.get("/modules/:moduleKey/workspace", async (req, res, next) => {
     const runs = runtime.runs.map(toPublicSourcingRun);
     const providerStatus = await getSearchProviderStatus();
 
-    // Calcul utilisation mois en cours
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const monthStart = getCurrentMonthStartIso();
     const runsThisMonth = runs.filter((run) => run.createdAt >= monthStart).length;
-    const prospectsThisMonth = runs
-      .filter((run) => run.createdAt >= monthStart)
-      .reduce((sum, run) => sum + run.foundCount, 0);
-
-    // Limites du plan actif
-    let planLimits: { maxRunsPerMonth: number; maxProspectsPerRun: number; planName: string } | null = null;
-    if (subscription) {
-      const allPlans = await loadSourcingPlans();
-      const subPlanName = (subscription as { planName?: string }).planName ?? "";
-      const matchedPlan = allPlans.find(
-        (p) => p.name.toLowerCase() === subPlanName.toLowerCase() || p.id === subPlanName
-      );
-      if (matchedPlan) {
-        planLimits = {
-          maxRunsPerMonth: matchedPlan.maxRunsPerMonth,
-          maxProspectsPerRun: matchedPlan.maxProspectsPerRun,
-          planName: matchedPlan.name
-        };
-      }
-    }
+    const prospectsThisMonth = runs.filter((run) => run.createdAt >= monthStart).reduce((sum, run) => sum + run.foundCount, 0);
+    const planLimits = await resolveSourcingPlanLimits(subscription ?? null);
+    const quota = computeSourcingQuota(runtime.runs, planLimits);
+    const session = getCurrentLiveSession(runtime.liveSessions);
+    const feed = runtime.liveEvents
+      .filter((event) => !session || event.sessionId === session.id)
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .slice(0, 40);
 
     return res.json({
       module: {
@@ -3886,12 +4409,351 @@ saasRouter.get("/modules/:moduleKey/workspace", async (req, res, next) => {
         prospectsThisMonth
       },
       planLimits,
-      providers: providerStatus
+      providers: providerStatus,
+      liveSession: session ? toPublicSourcingSession(session) : null,
+      liveFeed: feed.map(toPublicSourcingLiveEvent),
+      quota
     });
   } catch (error) {
     next(error);
   }
 });
+
+type SourcingRunExecutionResult =
+  | { ok: true; run: SaasSourcingRun }
+  | { ok: false; code: "subscription" | "quota" | "agent_not_found" | "agent_paused" | "validation" | "provider" | "no_results"; error: string };
+
+async function executeUserSourcingRun(
+  company: SaasCompany,
+  params: {
+    agentKey: string;
+    brief?: string;
+    sector?: string;
+    zone?: string;
+    targetCount?: number;
+    sessionId?: string;
+    cycleIndex?: number;
+    dedupeKeys?: Set<string>;
+  }
+): Promise<SourcingRunExecutionResult> {
+  const runtime = await getCompanyRuntime(company);
+  const subscription = runtime.subscriptions.find((item) => item.moduleKey === "sourcing-commercial");
+  if (!subscription || !isAccessibleSubscriptionStatus(subscription.status)) {
+    return { ok: false, code: "subscription", error: "Le module sourcing commercial n'est pas actif." };
+  }
+
+  const planLimits = await resolveSourcingPlanLimits(subscription);
+  const quota = computeSourcingQuota(runtime.runs, planLimits);
+  if (planLimits && quota.runsRemaining !== null && quota.runsRemaining <= 0) {
+    return { ok: false, code: "quota", error: `Le quota mensuel du plan ${planLimits.planName} est atteint.` };
+  }
+
+  const sourcingAgent = runtime.profiles.find(
+    (item) => item.moduleKey === "sourcing-commercial" && item.agentKey === params.agentKey
+  );
+  if (!sourcingAgent) {
+    return { ok: false, code: "agent_not_found", error: "Agent de sourcing introuvable." };
+  }
+  if (!sourcingAgent.isEnabled) {
+    return { ok: false, code: "agent_paused", error: `${sourcingAgent.displayName} est actuellement en pause.` };
+  }
+
+  const brief = params.brief?.trim() || sourcingAgent.missionConfig.keywords || "";
+  const sector = params.sector?.trim() || sourcingAgent.missionConfig.defaultSector || "";
+  const zone = params.zone?.trim() || sourcingAgent.missionConfig.defaultZone || "";
+  const targetCount = Math.min(
+    Math.max(Number(params.targetCount ?? sourcingAgent.missionConfig.defaultTargetCount ?? 6), 1),
+    planLimits?.maxProspectsPerRun ?? 10
+  );
+  if (!brief || !sector || !zone) {
+    return { ok: false, code: "validation", error: "Brief, secteur et zone sont obligatoires." };
+  }
+
+  const providerStatus = await getSearchProviderStatus();
+  if (sourcingAgent.missionConfig.source === "serper" && !providerStatus.serper.configured) {
+    return { ok: false, code: "provider", error: "L'agent Serper n'est pas pret: configure Serper dans les parametres IA." };
+  }
+  if (sourcingAgent.missionConfig.source === "tavily" && !providerStatus.tavily.configured) {
+    return { ok: false, code: "provider", error: "L'agent Tavily n'est pas pret: configure Tavily dans les parametres IA." };
+  }
+
+  const missionNotes = [
+    sourcingAgent.missionConfig.keywords ? `Mots-cles de mission: ${sourcingAgent.missionConfig.keywords}.` : "",
+    sourcingAgent.missionConfig.qualificationInstructions
+      ? `Qualification attendue: ${sourcingAgent.missionConfig.qualificationInstructions}.`
+      : "",
+    sourcingAgent.systemPrompt ? `Cadre agent: ${sourcingAgent.systemPrompt}.` : "",
+    sourcingAgent.identity ? `Identite agent: ${sourcingAgent.identity}.` : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const objective = `${buildSourcingObjective(brief, sector, zone)}${missionNotes ? ` ${missionNotes}` : ""}`.trim();
+  const searchQuery = buildSourcingSearchQuery(brief, sector, zone);
+  const research = await executeSourcingSearch({
+    objective,
+    searchQuery,
+    brief,
+    agentSource: sourcingAgent.missionConfig.source,
+    zone,
+    sector,
+    targetCount,
+    providerStatus
+  });
+
+  const persistedKeys = new Set(
+    runtime.runs
+      .flatMap((run) => run.prospects.map((prospect) => buildProspectDedupKey(prospect)))
+      .filter(Boolean)
+  );
+  const liveKeys = params.dedupeKeys ?? new Set<string>();
+  const prospects = await Promise.all(
+    research.results.map(async (result) => {
+      if (isRejectedSourcingCandidate({ title: result.title, url: result.url, snippet: result.snippet, summary: "" })) {
+        return null;
+      }
+
+      const summary = (await extractPageContent(result.url)) ?? result.snippet;
+      const combinedText = `${result.title} ${result.snippet} ${summary}`;
+      if (isRejectedSourcingCandidate({ title: result.title, url: result.url, snippet: result.snippet, summary })) return null;
+      if (!matchesSectorIntent({ title: result.title, url: result.url, snippet: result.snippet, summary }, sector, brief)) return null;
+      if (!looksLikeCompanyOfferPage({ title: result.title, url: result.url, snippet: result.snippet, summary }, sector, brief)) return null;
+      if (!hasStrongBusinessSignals({ title: result.title, url: result.url, snippet: result.snippet, summary })) return null;
+
+      const prospect = {
+        id: randomUUID(),
+        name: extractProspectName(result.title, result.url),
+        company: extractProspectName(result.title, result.url),
+        website: result.url,
+        snippet: result.snippet,
+        summary: summary.slice(0, 4000),
+        source: result.source,
+        score: Math.min(99, buildProspectScore(combinedText, summary, result.url) + buildMissionKeywordBoost(combinedText, sourcingAgent.missionConfig))
+      };
+
+      const dedupeKey = buildProspectDedupKey(prospect);
+      if (!dedupeKey || persistedKeys.has(dedupeKey) || liveKeys.has(dedupeKey)) return null;
+      return prospect;
+    })
+  );
+
+  const filteredProspects = dedupeSourcingProspects(prospects.filter((item): item is NonNullable<typeof item> => Boolean(item)))
+    .sort((left, right) => right.score - left.score)
+    .slice(0, targetCount);
+
+  if (!filteredProspects.length) {
+    return {
+      ok: false,
+      code: "no_results",
+      error:
+        "Aucun prospect qualifie n'a ete retenu. Precise davantage le secteur, la zone ou la cible pour eviter les pages emploi et resultats trop generiques."
+    };
+  }
+
+  for (const prospect of filteredProspects) {
+    const dedupeKey = buildProspectDedupKey(prospect);
+    if (dedupeKey) liveKeys.add(dedupeKey);
+  }
+
+  const run: SaasSourcingRun = {
+    id: randomUUID(),
+    companyId: runtime.company.id,
+    moduleKey: "sourcing-commercial",
+    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+    ...(typeof params.cycleIndex === "number" ? { cycleIndex: params.cycleIndex } : {}),
+    agentKey: sourcingAgent.agentKey,
+    agentName: sourcingAgent.displayName,
+    objective,
+    brief,
+    sector,
+    zone,
+    targetCount,
+    foundCount: filteredProspects.length,
+    status: "completed",
+    providerMode: research.providerMode,
+    providers: research.providers,
+    prospects: filteredProspects,
+    createdAt: new Date().toISOString()
+  };
+
+  const allRuns = await loadSourcingRuns();
+  await saveSourcingRuns([run, ...allRuns]);
+  return { ok: true, run };
+}
+
+async function processSourcingLiveSession(sessionId: string) {
+  if (sourcingLiveLocks.has(sessionId)) return;
+  sourcingLiveLocks.add(sessionId);
+  try {
+    const sessions = await loadSourcingLiveSessions();
+    const session = sessions.find((item) => item.id === sessionId) ?? null;
+    if (!session || session.status !== "running") {
+      clearSourcingLiveTimer(sessionId);
+      return;
+    }
+
+    const companies = await loadCompanies();
+    const company = companies.find((item) => item.id === session.companyId) ?? null;
+    if (!company) {
+      await stopSourcingLiveSession(sessionId, "blocked", "La session live ne retrouve plus l'entreprise associee.", "provider_error");
+      return;
+    }
+
+    const runtime = await getCompanyRuntime(company);
+    const subscription = runtime.subscriptions.find((item) => item.moduleKey === "sourcing-commercial");
+    if (!subscription || !isAccessibleSubscriptionStatus(subscription.status)) {
+      await stopSourcingLiveSession(sessionId, "blocked", "L'abonnement sourcing n'est plus actif.", "session_stopped");
+      return;
+    }
+
+    const planLimits = await resolveSourcingPlanLimits(subscription);
+    const quota = computeSourcingQuota(runtime.runs, planLimits);
+    if (planLimits && quota.runsRemaining !== null && quota.runsRemaining <= 0) {
+      await stopSourcingLiveSession(sessionId, "blocked", `Le quota mensuel du plan ${planLimits.planName} est atteint.`, "quota_reached");
+      return;
+    }
+
+    const orderedAgentKeys = session.activeAgentKeys.length ? session.activeAgentKeys : ["sourcing-serper", "sourcing-tavily"];
+    const liveKeys = new Set(
+      runtime.runs
+        .flatMap((run) => run.prospects.map((prospect) => buildProspectDedupKey(prospect)))
+        .filter(Boolean)
+    );
+
+    const cycleIndex = session.cycleCount + 1;
+    let attemptedAgents = 0;
+
+    for (const agentKey of orderedAgentKeys) {
+      const agent = runtime.profiles.find((item) => item.moduleKey === "sourcing-commercial" && item.agentKey === agentKey) ?? null;
+      if (!agent || !agent.isEnabled) {
+        await appendSourcingLiveEvent({
+          id: randomUUID(),
+          sessionId: session.id,
+          companyId: session.companyId,
+          agentKey,
+          agentName: agent?.displayName,
+          type: "agent_blocked",
+          level: "warning",
+          message: agent ? `${agent.displayName} est en pause pour cette boucle.` : "Un agent configure n'est plus disponible.",
+          createdAt: new Date().toISOString()
+        });
+        continue;
+      }
+
+      attemptedAgents += 1;
+      await updateSourcingLiveSession(session.id, (current) => ({
+        ...current,
+        currentAgentKey: agent.agentKey,
+        updatedAt: new Date().toISOString()
+      }));
+      await appendSourcingLiveEvent({
+        id: randomUUID(),
+        sessionId: session.id,
+        companyId: session.companyId,
+        agentKey: agent.agentKey,
+        agentName: agent.displayName,
+        type: "cycle_started",
+        level: "info",
+        message: `${agent.displayName} lance un nouveau cycle.`,
+        createdAt: new Date().toISOString()
+      });
+
+      const result = await executeUserSourcingRun(company, {
+        agentKey: agent.agentKey,
+        sessionId: session.id,
+        cycleIndex,
+        dedupeKeys: liveKeys
+      });
+
+      if (result.ok) {
+        await appendSourcingLiveEvent({
+          id: randomUUID(),
+          sessionId: session.id,
+          companyId: session.companyId,
+          agentKey: agent.agentKey,
+          agentName: agent.displayName,
+          type: "prospects_retained",
+          level: "success",
+          message: `${agent.displayName} a retenu ${result.run.foundCount} prospect(s).`,
+          runId: result.run.id,
+          prospectCount: result.run.foundCount,
+          createdAt: new Date().toISOString()
+        });
+        continue;
+      }
+
+      if (result.code === "quota") {
+        await stopSourcingLiveSession(session.id, "blocked", result.error, "quota_reached");
+        return;
+      }
+
+      const eventType = result.code === "provider" ? "provider_error" : result.code === "no_results" ? "no_results" : "agent_blocked";
+      const level = result.code === "provider" ? "error" : result.code === "no_results" ? "warning" : "warning";
+      await appendSourcingLiveEvent({
+        id: randomUUID(),
+        sessionId: session.id,
+        companyId: session.companyId,
+        agentKey: agent.agentKey,
+        agentName: agent.displayName,
+        type: eventType,
+        level,
+        message: result.error,
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    if (!attemptedAgents) {
+      clearSourcingLiveTimer(session.id);
+      const paused = await updateSourcingLiveSession(session.id, (current) => ({
+        ...current,
+        status: "paused",
+        stopReason: "Tous les agents de sourcing sont en pause.",
+        updatedAt: new Date().toISOString(),
+        currentAgentKey: undefined
+      }));
+      if (paused) {
+        await appendSourcingLiveEvent({
+          id: randomUUID(),
+          sessionId: paused.id,
+          companyId: paused.companyId,
+          type: "session_paused",
+          level: "warning",
+          message: "La session live est en pause car aucun agent actif n'est disponible.",
+          createdAt: new Date().toISOString()
+        });
+      }
+      return;
+    }
+
+    const updated = await updateSourcingLiveSession(session.id, (current) => ({
+      ...current,
+      status: "running",
+      stopReason: undefined,
+      cycleCount: current.cycleCount + 1,
+      lastCycleAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentAgentKey: undefined
+    }));
+
+    if (updated?.status === "running") {
+      scheduleSourcingLiveTick(updated.id);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Le moteur live a rencontre une erreur serveur.";
+    await stopSourcingLiveSession(sessionId, "blocked", message, "provider_error");
+  } finally {
+    sourcingLiveLocks.delete(sessionId);
+  }
+}
+
+export async function initializeSourcingLiveSessions() {
+  const sessions = await loadSourcingLiveSessions();
+  sessions
+    .filter((session) => session.status === "running")
+    .forEach((session) => {
+      scheduleSourcingLiveTick(session.id, 1000);
+    });
+}
 
 saasRouter.post("/modules/crm-intelligent/leads", async (req, res, next) => {
   try {
@@ -3961,141 +4823,26 @@ saasRouter.post("/modules/sourcing-commercial/runs", async (req, res, next) => {
       clearSessionCookie(res);
       return res.status(401).json({ error: "Session utilisateur invalide." });
     }
-    const runtime = await getCompanyRuntime(context.company);
-    const subscription = runtime.subscriptions.find((item) => item.moduleKey === "sourcing-commercial");
-    if (!subscription || !isAccessibleSubscriptionStatus(subscription.status)) {
-      return res.status(403).json({ error: "Le module sourcing commercial n'est pas actif." });
-    }
-
     const agentKeyInput = typeof req.body?.agentKey === "string" ? req.body.agentKey.trim() : "";
-    const sourcingAgents = runtime.profiles.filter((item) => item.moduleKey === "sourcing-commercial");
-    const sourcingAgent =
-      sourcingAgents.find((item) => item.agentKey === agentKeyInput) ??
-      sourcingAgents.find((item) => item.agentKey === "sourcing-serper") ??
-      sourcingAgents[0] ??
-      null;
-    if (!sourcingAgent) {
-      return res.status(404).json({ error: "Aucun agent de sourcing n'est configure pour ce compte." });
-    }
-    if (!sourcingAgent.isEnabled) {
-      return res.status(409).json({ error: `${sourcingAgent.displayName} est actuellement en pause.` });
-    }
-
-    const briefInput = typeof req.body?.brief === "string" ? req.body.brief.trim() : "";
-    const sectorInput = typeof req.body?.sector === "string" ? req.body.sector.trim() : "";
-    const zoneInput = typeof req.body?.zone === "string" ? req.body.zone.trim() : "";
-    const brief = briefInput || sourcingAgent?.missionConfig.keywords || "";
-    const sector = sectorInput || sourcingAgent?.missionConfig.defaultSector || "";
-    const zone = zoneInput || sourcingAgent?.missionConfig.defaultZone || "";
-    const targetCount = Math.min(
-      Math.max(Number(req.body?.targetCount ?? sourcingAgent?.missionConfig.defaultTargetCount ?? 6), 1),
-      10
-    );
-    if (!brief || !sector || !zone) return res.status(400).json({ error: "Brief, secteur et zone sont obligatoires." });
-
-    const providerStatus = await getSearchProviderStatus();
-    if (sourcingAgent.missionConfig.source === "serper" && !providerStatus.serper.configured) {
-      return res.status(409).json({ error: "L'agent Serper n'est pas pret: configure Serper dans les parametres IA." });
-    }
-    if (sourcingAgent.missionConfig.source === "tavily" && !providerStatus.tavily.configured) {
-      return res.status(409).json({ error: "L'agent Tavily n'est pas pret: configure Tavily dans les parametres IA." });
-    }
-
-    const missionNotes = [
-      sourcingAgent?.missionConfig.keywords ? `Mots-cles de mission: ${sourcingAgent.missionConfig.keywords}.` : "",
-      sourcingAgent?.missionConfig.qualificationInstructions
-        ? `Qualification attendue: ${sourcingAgent.missionConfig.qualificationInstructions}.`
-        : "",
-      sourcingAgent?.systemPrompt ? `Cadre agent: ${sourcingAgent.systemPrompt}.` : "",
-      sourcingAgent?.identity ? `Identite agent: ${sourcingAgent.identity}.` : ""
-      ]
-        .filter(Boolean)
-        .join(" ");
-    const objective = `${buildSourcingObjective(brief, sector, zone)}${missionNotes ? ` ${missionNotes}` : ""}`.trim();
-    const searchQuery = buildSourcingSearchQuery(brief, sector, zone);
-    const research = await executeSourcingSearch({
-      objective,
-      searchQuery,
-      brief,
-      agentSource: sourcingAgent.missionConfig.source,
-      zone,
-      sector,
-      targetCount,
-      providerStatus
+    const result = await executeUserSourcingRun(context.company, {
+      agentKey: agentKeyInput || "sourcing-serper",
+      brief: typeof req.body?.brief === "string" ? req.body.brief : "",
+      sector: typeof req.body?.sector === "string" ? req.body.sector : "",
+      zone: typeof req.body?.zone === "string" ? req.body.zone : "",
+      targetCount: Number(req.body?.targetCount ?? 6)
     });
 
-    const prospects = await Promise.all(
-      research.results.map(async (result) => {
-        if (isRejectedSourcingCandidate({ title: result.title, url: result.url, snippet: result.snippet, summary: "" })) {
-          return null;
-        }
-
-        const summary = (await extractPageContent(result.url)) ?? result.snippet;
-        const combinedText = `${result.title} ${result.snippet} ${summary}`;
-        if (isRejectedSourcingCandidate({ title: result.title, url: result.url, snippet: result.snippet, summary })) {
-          return null;
-        }
-        if (!matchesSectorIntent({ title: result.title, url: result.url, snippet: result.snippet, summary }, sector, brief)) {
-          return null;
-        }
-        if (!looksLikeCompanyOfferPage({ title: result.title, url: result.url, snippet: result.snippet, summary }, sector, brief)) {
-          return null;
-        }
-        if (!hasStrongBusinessSignals({ title: result.title, url: result.url, snippet: result.snippet, summary })) {
-          return null;
-        }
-
-        return {
-          id: randomUUID(),
-          name: extractProspectName(result.title, result.url),
-          company: extractProspectName(result.title, result.url),
-          website: result.url,
-          snippet: result.snippet,
-          summary: summary.slice(0, 4000),
-          source: result.source,
-          score: Math.min(
-            99,
-              buildProspectScore(combinedText, summary, result.url) +
-                (sourcingAgent ? buildMissionKeywordBoost(combinedText, sourcingAgent.missionConfig) : 0)
-          )
-        };
-      })
-    );
-    const filteredProspects = dedupeSourcingProspects(
-      prospects.filter((item): item is NonNullable<typeof item> => Boolean(item))
-    )
-      .sort((a, b) => b.score - a.score)
-      .slice(0, targetCount);
-
-    if (!filteredProspects.length) {
-      return res.status(422).json({
-        error:
-          "Aucun prospect qualifie n'a ete retenu. Precise davantage le secteur, la zone ou la cible pour eviter les pages emploi et resultats trop generiques."
-      });
+    if (!result.ok) {
+      const status =
+        result.code === "subscription" ? 403 :
+        result.code === "agent_not_found" ? 404 :
+        result.code === "validation" ? 400 :
+        result.code === "no_results" ? 422 :
+        409;
+      return res.status(status).json({ error: result.error });
     }
 
-    const run: SaasSourcingRun = {
-      id: randomUUID(),
-      companyId: runtime.company.id,
-      moduleKey: "sourcing-commercial",
-      agentKey: sourcingAgent.agentKey,
-      agentName: sourcingAgent.displayName,
-      objective,
-      brief,
-      sector,
-      zone,
-      targetCount,
-      foundCount: filteredProspects.length,
-      status: "completed",
-      providerMode: research.providerMode,
-      providers: research.providers,
-      prospects: filteredProspects,
-      createdAt: new Date().toISOString()
-    };
-
-    const runs = await loadSourcingRuns();
-    await saveSourcingRuns([run, ...runs]);
-    res.status(201).json({ ok: true, run: toPublicSourcingRun(run) });
+    res.status(201).json({ ok: true, run: toPublicSourcingRun(result.run) });
   } catch (error) {
     next(error);
   }
@@ -4228,7 +4975,9 @@ saasRouter.get("/admin/companies/:companyId", async (req, res, next) => {
       users: users.filter((item) => item.companyId === company.id).map(toPublicUser),
       subscriptions: subscriptions.filter((item) => item.companyId === company.id).map((item) => toPublicSubscription(item, invoices)),
       invoices: invoices.filter((item) => item.companyId === company.id).map(toPublicInvoice),
-      agents: profiles.filter((item) => item.companyId === company.id).map(toPublicAgentProfile)
+      agents: profiles
+        .filter((item) => item.companyId === company.id)
+        .map((profile) => toPublicAgentProfile(profile))
     });
   } catch (error) {
     next(error);
@@ -4312,7 +5061,7 @@ saasRouter.get("/admin/sourcing", async (_req, res, next) => {
       workspaces: sourcingCompanies.map((company) => {
         const companyProfiles = sourcingProfiles
           .filter((profile) => profile.companyId === company.id)
-          .map(toPublicAgentProfile);
+          .map((profile) => toPublicAgentProfile(profile));
         const companyRuns = runs.filter((run) => run.companyId === company.id);
         const subscription = subscriptions.find(
           (item) => item.companyId === company.id && item.moduleKey === "sourcing-commercial"

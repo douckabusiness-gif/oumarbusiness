@@ -1,243 +1,330 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  Clock,
-  ExternalLink,
-  Loader2,
-  MapPin,
-  Radar,
-  Search,
-  Tag,
-  Target,
-  X
-} from "lucide-react";
-import { SaasPortalShell } from "@/components/saas/SaasPortalShell";
-import type { SaasSourcingRun } from "@/components/saas/shared";
-import { formatDate, normalizeProspectScore } from "@/components/saas/shared";
-import { getApiBaseUrl } from "@/lib/api";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 
-const apiBaseUrl = getApiBaseUrl();
+type HistoryRun = {
+  id: string;
+  agentKey?: string | null;
+  status?: string | null;
+  keywords?: string | null;
+  sector?: string | null;
+  zone?: string | null;
+  keptCount?: number | null;
+  createdAt: string;
+  sessionId?: string | null;
+  cycleIndex?: number | null;
+};
+
+type LiveEvent = {
+  id: string;
+  agentKey?: string | null;
+  type: string;
+  message: string;
+  createdAt: string;
+  sessionId: string;
+  cycleIndex?: number | null;
+};
+
+type HistoryPayload = {
+  runs?: HistoryRun[];
+  history?: HistoryRun[];
+  items?: HistoryRun[];
+  liveFeed?: LiveEvent[];
+  feed?: LiveEvent[];
+};
+
+function agentName(agentKey?: string | null) {
+  if (agentKey === "sourcing-serper") {
+    return "Agent Serper";
+  }
+
+  if (agentKey === "sourcing-tavily") {
+    return "Agent Tavily";
+  }
+
+  return "Agent sourcing";
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) {
+    return "—";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, {
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const message =
+      (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+        ? payload.error
+        : null) ?? "Impossible de charger l’historique.";
+    throw new Error(message);
+  }
+
+  return payload as T;
+}
+
+function statusTone(status?: string | null) {
+  switch (status) {
+    case "completed":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+    case "running":
+      return "border-sky-500/30 bg-sky-500/10 text-sky-200";
+    case "paused":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+    case "blocked":
+    case "failed":
+      return "border-rose-500/30 bg-rose-500/10 text-rose-200";
+    default:
+      return "border-zinc-700 bg-zinc-900 text-zinc-300";
+  }
+}
 
 export default function UserHistoryPage() {
+  const [runs, setRuns] = useState<HistoryRun[]>([]);
+  const [events, setEvents] = useState<LiveEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [runs, setRuns] = useState<SaasSourcingRun[]>([]);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [filterSource, setFilterSource] = useState<"all" | "serper" | "tavily">("all");
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let active = true;
-    async function load() {
-      try {
-        const res = await fetch(`${apiBaseUrl}/api/sourcing/modules/sourcing-commercial/workspace`, {
-          cache: "no-store", credentials: "include"
-        });
-        if (!res.ok) throw new Error("Impossible de charger l'historique.");
-        const data = (await res.json()) as { runs: SaasSourcingRun[] };
-        if (active) setRuns((data.runs ?? []).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-      } catch (e) {
-        if (active) setError(e instanceof Error ? e.message : "Erreur.");
-      } finally {
-        if (active) setLoading(false);
-      }
+  const load = useCallback(async () => {
+    try {
+      const [historyPayload, livePayload] = await Promise.all([
+        fetchJson<HistoryPayload>("/api/sourcing/history"),
+        fetchJson<HistoryPayload>("/api/sourcing/agents/live/feed"),
+      ]);
+
+      setRuns(
+        Array.isArray(historyPayload)
+          ? historyPayload
+          : historyPayload.runs ??
+              historyPayload.history ??
+              historyPayload.items ??
+              [],
+      );
+      setEvents(
+        Array.isArray(livePayload)
+          ? livePayload
+          : livePayload.feed ?? livePayload.liveFeed ?? [],
+      );
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Impossible de charger l’historique.");
+    } finally {
+      setLoading(false);
     }
-    void load();
-    return () => { active = false; };
   }, []);
 
-  const filtered = useMemo(() => {
-    let list = [...runs];
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter((r) =>
-        (r.objective || r.brief).toLowerCase().includes(q) ||
-        r.sector.toLowerCase().includes(q) ||
-        r.zone.toLowerCase().includes(q)
-      );
-    }
-    if (filterSource !== "all") {
-      list = list.filter((r) => r.agentKey === `sourcing-${filterSource}`);
-    }
-    return list;
-  }, [runs, search, filterSource]);
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => void load(), 10000);
+    return () => window.clearInterval(timer);
+  }, [load]);
 
-  const totalProspects = useMemo(() => runs.reduce((s, r) => s + r.foundCount, 0), [runs]);
+  const groupedRuns = useMemo(() => {
+    const map = new Map<string, HistoryRun[]>();
+
+    for (const run of runs) {
+      const key = run.sessionId || `manual-${run.id}`;
+      const bucket = map.get(key) ?? [];
+      bucket.push(run);
+      map.set(key, bucket);
+    }
+
+    return [...map.entries()].sort((left, right) => {
+      const rightDate = right[1][0]?.createdAt ? Date.parse(right[1][0].createdAt) : 0;
+      const leftDate = left[1][0]?.createdAt ? Date.parse(left[1][0].createdAt) : 0;
+      return rightDate - leftDate;
+    });
+  }, [runs]);
 
   return (
-    <SaasPortalShell
-      title="Historique des runs"
-      subtitle="Toutes tes recherches de sourcing — clique sur un run pour voir ses prospects."
-    >
-      <div className="space-y-5">
-
-        {/* Stats */}
-        {!loading && (
-          <div className="grid grid-cols-3 gap-3">
-            <MiniStat label="Runs total" value={String(runs.length)} />
-            <MiniStat label="Complétés" value={String(runs.filter((r) => r.status === "completed").length)} />
-            <MiniStat label="Prospects" value={String(totalProspects)} />
-          </div>
-        )}
-
-        {/* Filtres */}
-        {!loading && runs.length > 0 && (
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="flex flex-1 items-center gap-2 rounded-2xl border border-line bg-panel px-3 py-2.5">
-              <Search className="h-4 w-4 shrink-0 text-zinc-500" />
-              <input
-                type="text"
-                placeholder="Rechercher un run..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="flex-1 bg-transparent text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
-              />
-              {search && <button type="button" onClick={() => setSearch("")}><X className="h-3.5 w-3.5 text-zinc-500" /></button>}
-            </div>
-            <div className="flex items-center gap-1 rounded-2xl border border-line bg-panel p-1">
-              {(["all", "serper", "tavily"] as const).map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setFilterSource(v)}
-                  className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${filterSource === v ? "bg-gold text-black" : "text-zinc-400 hover:text-zinc-200"}`}
-                >
-                  {v === "all" ? "Tous" : v === "serper" ? "Serper" : "Tavily"}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Liste */}
-        {loading ? (
-          <div className="flex min-h-[16rem] items-center justify-center rounded-3xl border border-line bg-panel">
-            <Loader2 className="h-7 w-7 animate-spin text-gold" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex min-h-[12rem] items-center justify-center rounded-3xl border border-dashed border-line bg-panel">
-            <p className="text-sm text-zinc-500">{runs.length === 0 ? "Aucun historique disponible." : "Aucun résultat pour ces filtres."}</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {filtered.map((run) => (
-              <RunCard
-                key={run.id}
-                run={run}
-                expanded={expandedId === run.id}
-                onToggle={() => setExpandedId(expandedId === run.id ? null : run.id)}
-              />
-            ))}
-          </div>
-        )}
-
-        {error && <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div>}
-      </div>
-    </SaasPortalShell>
-  );
-}
-
-function RunCard({ run, expanded, onToggle }: { run: SaasSourcingRun; expanded: boolean; onToggle: () => void }) {
-  const isSerper = run.agentKey === "sourcing-serper";
-  const statusColor = run.status === "completed" ? "emerald" : run.status === "running" ? "sky" : "zinc";
-
-  return (
-    <article className="overflow-hidden rounded-3xl border border-line bg-panel">
-      {/* Header cliquable */}
-      <button type="button" onClick={onToggle} className="w-full text-left">
-        <div className="flex items-center gap-4 p-5">
-          <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border ${isSerper ? "border-violet-500/20 bg-violet-500/10" : "border-sky-500/20 bg-sky-500/10"}`}>
-            <Radar className={`h-6 w-6 ${isSerper ? "text-violet-400" : "text-sky-400"}`} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="truncate font-bold text-zinc-100">{run.objective || run.brief}</p>
-            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-              <span className="flex items-center gap-1"><Tag className="h-3 w-3" />{run.sector || "—"}</span>
-              <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{run.zone || "—"}</span>
-              <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{formatDate(run.createdAt)}</span>
-            </div>
-          </div>
-          <div className="flex shrink-0 flex-col items-end gap-2">
-            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-              statusColor === "emerald" ? "bg-emerald-500/15 text-emerald-300" :
-              statusColor === "sky" ? "bg-sky-500/15 text-sky-300" : "bg-zinc-500/15 text-zinc-400"
-            }`}>
-              {run.status === "completed" ? "Terminé" : run.status === "running" ? "En cours" : run.status}
-            </span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-lg font-black text-zinc-100">{run.foundCount}</span>
-              <span className="text-xs text-zinc-600">/{run.targetCount}</span>
-              <Target className="h-3.5 w-3.5 text-zinc-600" />
-            </div>
-          </div>
-          <div className="ml-2 shrink-0">
-            {expanded ? <ChevronUp className="h-4 w-4 text-zinc-500" /> : <ChevronDown className="h-4 w-4 text-zinc-500" />}
-          </div>
-        </div>
-      </button>
-
-      {/* Prospects expandés */}
-      {expanded && run.prospects.length > 0 && (
-        <div className="border-t border-line px-5 pb-5 pt-4">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-500">
-            {run.prospects.length} prospect{run.prospects.length > 1 ? "s" : ""} trouvé{run.prospects.length > 1 ? "s" : ""}
+    <div className="space-y-8">
+      <section className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <div className="text-xs uppercase tracking-[0.32em] text-zinc-500">Espace Utilisateur</div>
+          <h1 className="mt-3 text-4xl font-semibold text-white">Historique</h1>
+          <p className="mt-2 max-w-3xl text-base text-zinc-400">
+            Suis les cycles live, les runs executes et les evenements remontes par Serper et Tavily.
           </p>
-          <div className="grid gap-3 md:grid-cols-2">
-            {run.prospects.map((p) => (
-              <div key={p.id} className="rounded-2xl border border-line bg-ink p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold text-zinc-100">{p.company}</p>
-                    {p.name && p.name !== p.company && <p className="truncate text-xs text-zinc-500">{p.name}</p>}
+        </div>
+        <Link
+          href="/user/agents"
+          className="inline-flex items-center justify-center rounded-2xl border border-amber-400/40 bg-amber-400/10 px-5 py-3 text-sm font-medium text-amber-200 transition hover:bg-amber-400/15"
+        >
+          Retour au centre live
+        </Link>
+      </section>
+
+      {error ? (
+        <div className="rounded-3xl border border-rose-500/30 bg-rose-500/10 px-5 py-4 text-sm text-rose-200">
+          {error}
+        </div>
+      ) : null}
+
+      <section className="grid gap-6 xl:grid-cols-[1.2fr_0.9fr]">
+        <div className="rounded-[28px] border border-zinc-800 bg-zinc-950/70 p-6">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="text-xs uppercase tracking-[0.28em] text-zinc-500">Runs par session</div>
+              <h2 className="mt-3 text-2xl font-semibold text-white">Cycles enregistres</h2>
+            </div>
+            <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs text-zinc-300">
+              {loading ? "Chargement…" : `${runs.length} run(s)`}
+            </span>
+          </div>
+
+          <div className="mt-6 space-y-5">
+            {groupedRuns.length === 0 ? (
+              <EmptyState
+                title="Aucun historique pour l’instant"
+                body="Lance les agents live ou un run manuel pour remplir cette page."
+              />
+            ) : (
+              groupedRuns.map(([sessionId, sessionRuns]) => (
+                <div
+                  key={sessionId}
+                  className="rounded-[24px] border border-zinc-800 bg-zinc-950 p-5"
+                >
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-white">
+                        {sessionId.startsWith("manual-")
+                          ? "Run manuel"
+                          : `Session ${sessionId.slice(0, 8)}`}
+                      </div>
+                      <div className="mt-1 text-sm text-zinc-400">
+                        Dernier mouvement : {formatDateTime(sessionRuns[0]?.createdAt)}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge>{sessionRuns.length} cycle(s)</Badge>
+                      {!sessionId.startsWith("manual-") ? <Badge>ID {sessionId.slice(0, 8)}</Badge> : null}
+                    </div>
                   </div>
-                  <ScorePill score={p.score} />
+
+                  <div className="mt-5 space-y-3">
+                    {sessionRuns.map((run) => (
+                      <div
+                        key={run.id}
+                        className="rounded-2xl border border-zinc-800 bg-black/30 px-4 py-4"
+                      >
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <div>
+                            <div className="text-sm font-medium text-white">{agentName(run.agentKey)}</div>
+                            <div className="mt-1 text-sm text-zinc-400">
+                              {run.keywords || "Mission live sauvegardee"}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <span
+                              className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${statusTone(run.status)}`}
+                            >
+                              {run.status ?? "completed"}
+                            </span>
+                            {run.cycleIndex != null ? <Badge>Cycle {run.cycleIndex}</Badge> : null}
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 text-sm text-zinc-400 md:grid-cols-4">
+                          <InfoCell label="Secteur" value={run.sector ?? "—"} />
+                          <InfoCell label="Zone" value={run.zone ?? "—"} />
+                          <InfoCell label="Retenus" value={String(run.keptCount ?? 0)} />
+                          <InfoCell label="Lance le" value={formatDateTime(run.createdAt)} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                {(p.snippet || p.summary) && (
-                  <p className="mt-2 line-clamp-2 text-xs leading-5 text-zinc-400">{p.snippet || p.summary}</p>
-                )}
-                {p.website && (
-                  <a
-                    href={p.website.startsWith("http") ? p.website : `https://${p.website}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-2 inline-flex items-center gap-1 text-xs text-gold hover:text-amber-400"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    {p.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}
-                  </a>
-                )}
-                {p.pushedToCrmAt && (
-                  <p className="mt-2 flex items-center gap-1 text-[11px] text-emerald-400">
-                    <CheckCircle2 className="h-3 w-3" /> Enregistre
-                  </p>
-                )}
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
-      )}
-      {expanded && run.prospects.length === 0 && (
-        <div className="border-t border-line px-5 py-4 text-sm text-zinc-500">Aucun prospect trouvé pour ce run.</div>
-      )}
-    </article>
+
+        <div className="rounded-[28px] border border-zinc-800 bg-zinc-950/70 p-6">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="text-xs uppercase tracking-[0.28em] text-zinc-500">Flux live fusionne</div>
+              <h2 className="mt-3 text-2xl font-semibold text-white">Evenements recents</h2>
+            </div>
+            <span className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs text-zinc-300">
+              {loading ? "Chargement…" : `${events.length} event(s)`}
+            </span>
+          </div>
+
+          <div className="mt-6 space-y-3">
+            {events.length === 0 ? (
+              <EmptyState
+                title="Aucun evenement live"
+                body="Les demarrages de cycle, erreurs provider et prospects retenus apparaitront ici."
+              />
+            ) : (
+              events.slice(0, 12).map((event) => (
+                <div key={event.id} className="rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium text-white">{event.message}</div>
+                      <div className="mt-1 text-xs text-zinc-500">
+                        {agentName(event.agentKey)} • {event.type}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge>{event.sessionId.slice(0, 8)}</Badge>
+                      {event.cycleIndex != null ? <Badge>Cycle {event.cycleIndex}</Badge> : null}
+                    </div>
+                  </div>
+                  <div className="mt-3 text-xs text-zinc-500">{formatDateTime(event.createdAt)}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }
 
-function ScorePill({ score }: { score: number }) {
-  const displayScore = normalizeProspectScore(score);
-  const color = displayScore >= 8 ? "text-emerald-300 bg-emerald-500/15" : displayScore >= 5 ? "text-gold bg-gold/15" : "text-zinc-400 bg-zinc-500/10";
-  return <span className={`shrink-0 rounded-lg px-2 py-0.5 text-xs font-bold ${color}`}>{displayScore}/10</span>;
+function InfoCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">{label}</div>
+      <div className="mt-1 text-zinc-200">{value}</div>
+    </div>
+  );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function Badge({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-2xl border border-line bg-panel p-4 text-center">
-      <p className="text-xl font-black text-zinc-100">{value}</p>
-      <p className="mt-1 text-xs text-zinc-500">{label}</p>
+    <span className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-300">
+      {children}
+    </span>
+  );
+}
+
+function EmptyState({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-zinc-800 px-5 py-6 text-center">
+      <div className="text-sm font-medium text-white">{title}</div>
+      <p className="mt-2 text-sm text-zinc-400">{body}</p>
     </div>
   );
 }

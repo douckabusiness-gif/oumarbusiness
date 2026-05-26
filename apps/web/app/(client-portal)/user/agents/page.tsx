@@ -1,735 +1,691 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import {
-  BookOpen,
-  Bot,
-  Brain,
-  Loader2,
-  Pause,
-  Play,
-  Search,
-  ShieldCheck,
-  Sparkles,
-  Target,
-  User,
-  Wand2,
-  X
-} from "lucide-react";
-import { SaasPortalShell } from "@/components/saas/SaasPortalShell";
-import type { SaasAgentProfile, SaasSourcingRun, SourcingMissionConfig } from "@/components/saas/shared";
-import { getApiBaseUrl } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 
-const apiBaseUrl = getApiBaseUrl();
-
-
-type AgentsPayload = {
-  agents: SaasAgentProfile[];
+type AgentMetrics = {
+  runs?: number;
+  prospects?: number;
+  conversions?: number;
+  sources?: number;
+  lastRunAt?: string | null;
 };
 
-type WorkspacePayload = {
-  runs: SaasSourcingRun[];
-  stats: {
-    total: number;
-    completed: number;
-    prospectsFound: number;
-  };
-  providers: {
-    serper: { configured: boolean };
-    tavily: { configured: boolean };
-  };
+type AgentConfig = {
+  id: string;
+  agentKey: string;
+  name: string;
+  enabled?: boolean;
+  source?: string | null;
+  keywords?: string | null;
+  instructions?: string | null;
+  defaultSector?: string | null;
+  defaultZone?: string | null;
+  defaultTargetCount?: number | null;
+  metrics?: AgentMetrics;
 };
 
-type FormState = {
-  displayName: string;
-  isEnabled: boolean;
-  systemPrompt: string;
-  personality: string;
-  identity: string;
-  userContext: string;
-  tone: string;
-  requireApproval: boolean;
-  missionConfig: SourcingMissionConfig;
+type LiveSession = {
+  id: string;
+  status: "idle" | "running" | "paused" | "stopped" | "blocked" | "completed";
+  activeAgentKeys: string[];
+  stopReason?: string | null;
+  cycleCount: number;
+  lastCycleAt?: string | null;
 };
 
-function buildForm(agent: SaasAgentProfile): FormState {
-  return {
-    displayName: agent.displayName,
-    isEnabled: agent.isEnabled,
-    systemPrompt: agent.systemPrompt || "",
-    personality: agent.personality || "",
-    identity: agent.identity || "",
-    userContext: agent.userContext || "",
-    tone: agent.tone || "",
-    requireApproval: agent.requireApproval,
-    missionConfig: {
-      source: agent.missionConfig?.source || "serper",
-      keywords: agent.missionConfig?.keywords || "",
-      qualificationInstructions: agent.missionConfig?.qualificationInstructions || "",
-      enrollmentMode: "none",
-      defaultSector: agent.missionConfig?.defaultSector || "",
-      defaultZone: agent.missionConfig?.defaultZone || "",
-      defaultTargetCount: agent.missionConfig?.defaultTargetCount || 6
-    }
-  };
+type LiveEvent = {
+  id: string;
+  agentKey?: string | null;
+  type: string;
+  message: string;
+  createdAt: string;
+  sessionId: string;
+  cycleIndex?: number | null;
+};
+
+type LiveQuota = {
+  monthlyRunLimit: number | null;
+  monthlyRunsUsed: number;
+  monthlyRunsRemaining: number | null;
+  monthlyProspectsKept: number;
+  canRun: boolean;
+};
+
+type LivePayload = {
+  session?: LiveSession | null;
+  liveSession?: LiveSession | null;
+  feed?: LiveEvent[];
+  liveFeed?: LiveEvent[];
+  quota?: LiveQuota | null;
+};
+
+type AgentPayload = AgentConfig[] | { agents?: AgentConfig[] };
+
+type SavePayload = Partial<
+  Pick<
+    AgentConfig,
+    | "name"
+    | "enabled"
+    | "source"
+    | "keywords"
+    | "instructions"
+    | "defaultSector"
+    | "defaultZone"
+    | "defaultTargetCount"
+  >
+>;
+
+function agentLabel(agentKey: string) {
+  if (agentKey === "sourcing-serper") {
+    return "Agent Serper";
+  }
+
+  if (agentKey === "sourcing-tavily") {
+    return "Agent Tavily";
+  }
+
+  return "Agent sourcing";
+}
+
+function agentDescription(agentKey: string) {
+  if (agentKey === "sourcing-serper") {
+    return "Decouverte rapide — trouve vite des pistes et entreprises.";
+  }
+
+  if (agentKey === "sourcing-tavily") {
+    return "Qualification profonde — lit et analyse les pages en detail.";
+  }
+
+  return "Agent de sourcing.";
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) {
+    return "—";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "—";
+  }
+
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+async function parseJson<T>(response: Response): Promise<T | null> {
+  return response.json().catch(() => null);
+}
+
+async function fetchJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, {
+    credentials: "include",
+    cache: "no-store",
+  });
+
+  const payload = await parseJson<T & { error?: string }>(response);
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Impossible de charger les agents.");
+  }
+
+  return payload as T;
+}
+
+async function postJson<T>(url: string, body?: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : "{}",
+  });
+
+  const payload = await parseJson<T & { error?: string }>(response);
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Action impossible.");
+  }
+
+  return (payload ?? ({} as T)) as T;
+}
+
+async function patchJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "PATCH",
+    credentials: "include",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const payload = await parseJson<T & { error?: string }>(response);
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Mise a jour impossible.");
+  }
+
+  return (payload ?? ({} as T)) as T;
+}
+
+function isConfigured(agent: AgentConfig) {
+  return Boolean(
+    agent.source &&
+      agent.keywords &&
+      agent.instructions &&
+      agent.defaultSector &&
+      agent.defaultZone &&
+      agent.defaultTargetCount,
+  );
+}
+
+function cardStatus(agent: AgentConfig, liveSession: LiveSession | null) {
+  const active = liveSession?.activeAgentKeys?.includes(agent.agentKey);
+
+  if (active && liveSession?.status === "running") {
+    return "EN LIGNE";
+  }
+
+  if (active && liveSession?.status === "paused") {
+    return "EN PAUSE";
+  }
+
+  if (active && liveSession?.status === "blocked") {
+    return "BLOQUE";
+  }
+
+  if (isConfigured(agent)) {
+    return "PRET";
+  }
+
+  return "A CONFIGURER";
+}
+
+function sourceLabel(value?: string | null) {
+  if (!value) {
+    return "Web";
+  }
+
+  if (value === "serper") {
+    return "Serper";
+  }
+
+  if (value === "tavily") {
+    return "Tavily";
+  }
+
+  return value;
+}
+
+function liveSessionLabel(session: LiveSession | null) {
+  switch (session?.status) {
+    case "running":
+      return "EN LIGNE";
+    case "paused":
+      return "EN PAUSE";
+    case "blocked":
+      return "BLOQUE";
+    case "completed":
+      return "TERMINE";
+    case "stopped":
+      return "ARRETE";
+    default:
+      return "INACTIF";
+  }
 }
 
 export default function UserAgentsPage() {
+  const [agents, setAgents] = useState<AgentConfig[]>([]);
+  const [live, setLive] = useState<LivePayload | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busyAgent, setBusyAgent] = useState<string | null>(null);
+  const [editing, setEditing] = useState<AgentConfig | null>(null);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-  const [agents, setAgents] = useState<SaasAgentProfile[]>([]);
-  const [workspace, setWorkspace] = useState<WorkspacePayload | null>(null);
-  const [selectedAgentKey, setSelectedAgentKey] = useState("");
-  const [form, setForm] = useState<FormState | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"mission" | "brain">("mission");
 
-  useEffect(() => {
-    let active = true;
+  const load = useCallback(async () => {
+    try {
+      const [agentsPayload, livePayload] = await Promise.all([
+        fetchJson<AgentPayload>("/api/sourcing/agents"),
+        fetchJson<LivePayload>("/api/sourcing/agents/live"),
+      ]);
 
-    async function load() {
-      try {
-        const [agentsResponse, workspaceResponse] = await Promise.all([
-          fetch(`${apiBaseUrl}/api/sourcing/agents`, {
-            cache: "no-store",
-            credentials: "include"
-          }),
-          fetch(`${apiBaseUrl}/api/sourcing/modules/sourcing-commercial/workspace`, {
-            cache: "no-store",
-            credentials: "include"
-          })
-        ]);
-        if (!agentsResponse.ok) throw new Error("Impossible de charger les agents de sourcing.");
-        if (!workspaceResponse.ok) throw new Error("Impossible de charger l'activite de sourcing.");
-
-        const agentsData = (await agentsResponse.json()) as AgentsPayload;
-        const workspaceData = (await workspaceResponse.json()) as WorkspacePayload;
-        if (!active) return;
-
-        const sourcingAgents = agentsData.agents
-          .filter((item) => item.moduleKey === "sourcing-commercial")
-          .sort((left, right) => agentRank(left.agentKey) - agentRank(right.agentKey));
-
-        setAgents(sourcingAgents);
-        setWorkspace(workspaceData);
-      } catch (caught) {
-        if (active) setError(caught instanceof Error ? caught.message : "Impossible de charger les agents de sourcing.");
-      } finally {
-        if (active) setLoading(false);
-      }
+      setAgents(Array.isArray(agentsPayload) ? agentsPayload : agentsPayload.agents ?? []);
+      setLive(livePayload);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Impossible de charger le centre live.");
+    } finally {
+      setLoading(false);
     }
-
-    void load();
-    return () => {
-      active = false;
-    };
   }, []);
 
-  const selectedAgent = useMemo(
-    () => agents.find((item) => item.agentKey === selectedAgentKey) ?? null,
-    [agents, selectedAgentKey]
-  );
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => void load(), 8000);
+    return () => window.clearInterval(timer);
+  }, [load]);
 
-  const missionReady = useMemo(() => {
-    if (!form) return false;
-    return Boolean(
-      form.missionConfig.keywords.trim() &&
-        form.missionConfig.qualificationInstructions.trim() &&
-        form.missionConfig.defaultSector.trim() &&
-        form.missionConfig.defaultZone.trim()
-    );
-  }, [form]);
+  const liveSession = live?.session ?? live?.liveSession ?? null;
+  const liveFeed = live?.feed ?? live?.liveFeed ?? [];
+  const quota = live?.quota ?? null;
 
-  const brainReady = useMemo(() => {
-    if (!form) return false;
-    return Boolean(form.systemPrompt.trim() && form.identity.trim());
-  }, [form]);
-
-  const liveFeed = useMemo(
-    () =>
-      (workspace?.runs ?? [])
-        .slice()
-        .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
-        .slice(0, 6),
-    [workspace]
-  );
-
-  async function saveAgent() {
-    if (!selectedAgent || !form) return;
-
-    try {
-      setSaving(true);
-      setError("");
-      setSuccess("");
-      const response = await fetch(`${apiBaseUrl}/api/sourcing/agents/${selectedAgent.agentKey}`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form)
-      });
-      const data = (await response.json()) as { ok?: boolean; error?: string; agent?: SaasAgentProfile };
-      if (!response.ok || !data.ok || !data.agent) throw new Error(data.error ?? "Impossible d'enregistrer l'agent.");
-
-      setAgents((current) =>
-        current
-          .map((item) => (item.agentKey === data.agent!.agentKey ? data.agent! : item))
-          .sort((left, right) => agentRank(left.agentKey) - agentRank(right.agentKey))
-      );
-      setForm(buildForm(data.agent));
-      setSuccess(`Les reglages de ${data.agent.displayName} ont bien ete enregistres.`);
-      setModalOpen(false);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Impossible d'enregistrer l'agent.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function toggleAgent(agent: SaasAgentProfile) {
-    try {
-      setSaving(true);
-      setError("");
-      setSuccess("");
-      const response = await fetch(`${apiBaseUrl}/api/sourcing/agents/${agent.agentKey}`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isEnabled: !agent.isEnabled })
-      });
-      const data = (await response.json()) as { ok?: boolean; error?: string; agent?: SaasAgentProfile };
-      if (!response.ok || !data.ok || !data.agent) throw new Error(data.error ?? "Impossible de mettre a jour l'agent.");
-
-      setAgents((current) =>
-        current
-          .map((item) => (item.agentKey === data.agent!.agentKey ? data.agent! : item))
-          .sort((left, right) => agentRank(left.agentKey) - agentRank(right.agentKey))
-      );
-      setSuccess(`${data.agent.displayName} est maintenant ${data.agent.isEnabled ? "actif" : "en pause"}.`);
-      if (selectedAgentKey === data.agent.agentKey) {
-        setForm(buildForm(data.agent));
+  const handleAgentAction = useCallback(
+    async (agentKey: string, action: "start" | "pause" | "resume" | "stop") => {
+      setBusyAgent(`${agentKey}:${action}`);
+      try {
+        await postJson(`/api/sourcing/agents/live/${action}`, { agentKey });
+        await load();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Action impossible.");
+      } finally {
+        setBusyAgent(null);
       }
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Impossible de mettre a jour l'agent.");
-    } finally {
-      setSaving(false);
-    }
-  }
+    },
+    [load],
+  );
 
-  function openAgent(agent: SaasAgentProfile) {
-    setSelectedAgentKey(agent.agentKey);
-    setForm(buildForm(agent));
-    setActiveTab("mission");
-    setModalOpen(true);
-  }
+  const handleSave = useCallback(
+    async (payload: SavePayload) => {
+      if (!editing) {
+        return;
+      }
 
+      setSaving(true);
+      try {
+        await patchJson(`/api/sourcing/agents/${editing.agentKey}`, payload);
+        setEditing(null);
+        await load();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Enregistrement impossible.");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [editing, load],
+  );
+
+  const totalRuns = useMemo(
+    () => agents.reduce((sum, item) => sum + (item.metrics?.runs ?? 0), 0),
+    [agents],
+  );
+
+  const totalProspects = useMemo(
+    () => agents.reduce((sum, item) => sum + (item.metrics?.prospects ?? 0), 0),
+    [agents],
+  );
 
   return (
-    <SaasPortalShell
-      title="Agents"
-      subtitle="Tu as maintenant deux agents distincts: Serper pour la recherche rapide, Tavily pour l'analyse et la qualification."
-    >
-      <div className="space-y-6">
-        {loading ? (
-          <section className="flex min-h-[16rem] items-center justify-center rounded-3xl border border-line bg-panel">
-            <Loader2 className="h-7 w-7 animate-spin text-gold" />
-          </section>
-        ) : (
-          <>
-            <section className="rounded-3xl border border-line bg-panel p-6">
-              <p className="text-sm text-gold">Centre de commandement</p>
-              <h2 className="mt-2 text-2xl font-bold">Agents de Sourcing</h2>
-              <p className="mt-3 max-w-3xl text-sm leading-7 text-muted">
-                Chaque agent rend un service different. Serper ouvre le terrain et trouve des pistes. Tavily lit mieux les pages,
-                enrichit les resultats et aide a mieux qualifier.
-              </p>
-            </section>
-
-            <section className="grid gap-6 xl:grid-cols-2">
-              {agents.map((agent) => (
-                <AgentCard
-                  key={agent.agentKey}
-                  agent={agent}
-                  runs={workspace?.runs ?? []}
-                  providers={workspace?.providers ?? null}
-                  busy={saving}
-                  onConfigure={() => openAgent(agent)}
-                  onToggle={() => void toggleAgent(agent)}
-                />
-              ))}
-            </section>
-
-            <section className="rounded-3xl border border-line bg-panel p-6">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm text-gold">Flux live</p>
-                  <h3 className="mt-2 text-2xl font-bold">Activite recente des agents</h3>
-                </div>
-                <Link href="/user/history" className="text-sm font-medium text-gold hover:text-gold/80">
-                  Voir tout
-                </Link>
-              </div>
-
-              {liveFeed.length ? (
-                <div className="mt-5 space-y-3">
-                  {liveFeed.map((run) => (
-                    <div key={run.id} className="rounded-2xl border border-line bg-ink p-4">
-                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                        <div>
-                          <p className="font-semibold text-zinc-100">{run.agentName}</p>
-                          <p className="mt-1 text-sm leading-6 text-muted">{run.objective || run.brief}</p>
-                        </div>
-                        <div className="text-sm text-zinc-300">
-                          {run.foundCount} prospect(s) • {run.status}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-5 rounded-2xl border border-line bg-ink px-4 py-5">
-                  <p className="font-medium text-zinc-100">Aucune activite recente</p>
-                  <p className="mt-2 text-sm leading-6 text-muted">
-                    Le flux live se remplira apres les prochains runs de Serper et Tavily.
-                  </p>
-                </div>
-              )}
-            </section>
-
-            {!agents.length ? (
-              <section className="rounded-3xl border border-line bg-panel p-6">
-                <p className="font-medium text-zinc-100">Aucun agent de sourcing disponible</p>
-                <p className="mt-2 text-sm leading-6 text-muted">
-                  Le profil d'agent n'a pas encore ete initialise pour ce compte utilisateur.
-                </p>
-              </section>
-            ) : null}
-          </>
-        )}
-
-        {error ? <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</div> : null}
-        {success ? <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{success}</div> : null}
-
-        {modalOpen && selectedAgent && form ? (
-          <div className="fixed inset-0 z-50 bg-black/70 px-4 py-8">
-            <div className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-line bg-panel shadow-2xl">
-              <div className="flex items-start justify-between gap-4 border-b border-line px-6 py-5">
-                <div>
-                  <p className="text-sm text-gold">Configurer l'agent</p>
-                  <h3 className="mt-1 text-2xl font-bold">{selectedAgent.displayName}</h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-line text-zinc-300"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="border-b border-line px-6 py-3">
-                <div className="flex gap-3">
-                  <TabButton active={activeTab === "mission"} onClick={() => setActiveTab("mission")} icon={Target} label="Mission" />
-                  <TabButton active={activeTab === "brain"} onClick={() => setActiveTab("brain")} icon={Brain} label="Cerveau de l'Agent" />
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto px-6 py-6">
-                {activeTab === "mission" ? (
-                  <div className="space-y-6">
-                    <InfoBlock
-                      title="Source verrouillee"
-                      text={`Cet agent travaille uniquement avec ${labelForSource(form.missionConfig.source)}.`}
-                    />
-
-                    <TextField
-                      label="Mots-cles de recherche"
-                      placeholder="ex: cliniques privees, site web, Abidjan"
-                      value={form.missionConfig.keywords}
-                      onChange={(value) =>
-                        setForm({ ...form, missionConfig: { ...form.missionConfig, keywords: value } })
-                      }
-                    />
-
-                    <TextareaField
-                      label="Instructions de qualification"
-                      placeholder="Decris comment cet agent reconnait un bon prospect..."
-                      value={form.missionConfig.qualificationInstructions}
-                      onChange={(value) =>
-                        setForm({
-                          ...form,
-                          missionConfig: { ...form.missionConfig, qualificationInstructions: value }
-                        })
-                      }
-                    />
-
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <TextField
-                        label="Secteur par defaut"
-                        placeholder="ex: Sante"
-                        value={form.missionConfig.defaultSector}
-                        onChange={(value) =>
-                          setForm({ ...form, missionConfig: { ...form.missionConfig, defaultSector: value } })
-                        }
-                      />
-                      <TextField
-                        label="Zone par defaut"
-                        placeholder="ex: Abidjan"
-                        value={form.missionConfig.defaultZone}
-                        onChange={(value) =>
-                          setForm({ ...form, missionConfig: { ...form.missionConfig, defaultZone: value } })
-                        }
-                      />
-                      <TextField
-                        label="Nombre vise"
-                        placeholder="6"
-                        value={String(form.missionConfig.defaultTargetCount)}
-                        onChange={(value) =>
-                          setForm({
-                            ...form,
-                            missionConfig: {
-                              ...form.missionConfig,
-                              defaultTargetCount: Math.min(Math.max(Number(value || 6), 1), 10)
-                            }
-                          })
-                        }
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-6">
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <TextField
-                        label="Nom de l'agent"
-                        value={form.displayName}
-                        onChange={(value) => setForm({ ...form, displayName: value })}
-                      />
-                      <div className="rounded-2xl border border-line bg-ink p-4">
-                        <p className="text-sm font-semibold text-zinc-100">Etat de l'agent</p>
-                        <p className="mt-1 text-xs leading-6 text-muted">
-                          Coupe l'agent ici si tu veux bloquer les lancements depuis la page sourcing.
-                        </p>
-                        <div className="mt-4 flex items-center justify-between gap-4">
-                          <span className={`rounded-full px-3 py-1 text-xs ${form.isEnabled ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-200"}`}>
-                            {form.isEnabled ? "Actif" : "En pause"}
-                          </span>
-                          <Toggle checked={form.isEnabled} onChange={(checked) => setForm({ ...form, isEnabled: checked })} />
-                        </div>
-                      </div>
-
-                    </div>
-
-                    <TextareaField
-                      label="BOOTSTRAP"
-                      icon={BookOpen}
-                      placeholder="Instructions de base..."
-                      value={form.systemPrompt}
-                      onChange={(value) => setForm({ ...form, systemPrompt: value })}
-                    />
-                    <TextareaField
-                      label="SOUL"
-                      icon={Sparkles}
-                      placeholder="Style, ton, attitude..."
-                      value={form.personality}
-                      onChange={(value) => setForm({ ...form, personality: value })}
-                    />
-                    <TextareaField
-                      label="IDENTITY"
-                      icon={User}
-                      placeholder="Role, expertise, posture..."
-                      value={form.identity}
-                      onChange={(value) => setForm({ ...form, identity: value })}
-                    />
-                    <TextareaField
-                      label="USER CONTEXT"
-                      icon={Bot}
-                      placeholder="Contexte business, cible, priorites..."
-                      value={form.userContext}
-                      onChange={(value) => setForm({ ...form, userContext: value })}
-                    />
-
-                    <TextField
-                      label="Ton de reponse"
-                      value={form.tone}
-                      onChange={(value) => setForm({ ...form, tone: value })}
-                    />
-
-                    <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4">
-                      <div className="flex items-center justify-between gap-4">
-                        <div>
-                          <p className="flex items-center gap-2 text-sm font-semibold text-amber-200">
-                            <ShieldCheck className="h-4 w-4" />
-                            Validation humaine
-                          </p>
-                          <p className="mt-1 text-xs leading-6 text-amber-100/80">
-                            Si activee, l'agent prepare le sourcing mais garde la main humaine sur les suites sensibles.
-                          </p>
-                        </div>
-                        <Toggle checked={form.requireApproval} onChange={(checked) => setForm({ ...form, requireApproval: checked })} />
-                      </div>
-                    </div>
-
-
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center justify-end gap-3 border-t border-line px-6 py-5">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="inline-flex h-11 items-center rounded-2xl border border-line px-4 text-sm font-medium text-zinc-100"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void saveAgent()}
-                  disabled={saving}
-                  className="inline-flex h-11 items-center gap-2 rounded-2xl bg-gold px-4 text-sm font-semibold text-black disabled:opacity-60"
-                >
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-                  Enregistrer les parametres
-                </button>
-              </div>
-            </div>
+    <div className="space-y-8">
+      <section className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <div className="text-xs uppercase tracking-[0.32em] text-zinc-500">Espace Utilisateur</div>
+          <h1 className="mt-3 text-4xl font-semibold text-white">Agents IA</h1>
+          <p className="mt-2 max-w-3xl text-base text-zinc-400">
+            Configure chaque agent une fois, puis lance Serper et Tavily separement sans brief manuel partage.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3 text-sm text-zinc-300">
+            {quota?.monthlyRunsRemaining == null
+              ? "Runs restants illimites"
+              : `${quota.monthlyRunsRemaining} run(s) restant(s)`}
           </div>
-        ) : null}
-      </div>
-    </SaasPortalShell>
+          <button
+            type="button"
+            onClick={() => postJson("/api/sourcing/agents/live/stop", {}).then(load).catch((err: Error) => setError(err.message))}
+            className="rounded-2xl border border-rose-500/35 bg-rose-500/10 px-4 py-3 text-sm font-medium text-rose-200 transition hover:bg-rose-500/15"
+          >
+            Arreter tous les agents
+          </button>
+        </div>
+      </section>
+
+      {error ? (
+        <div className="rounded-3xl border border-rose-500/30 bg-rose-500/10 px-5 py-4 text-sm text-rose-200">
+          {error}
+        </div>
+      ) : null}
+
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Agents" value={loading ? "…" : String(agents.length)} />
+        <MetricCard label="Runs" value={loading ? "…" : String(totalRuns)} />
+        <MetricCard label="Prospects" value={loading ? "…" : String(totalProspects)} />
+        <MetricCard
+          label="Session live"
+          value={loading ? "…" : liveSessionLabel(liveSession)}
+        />
+      </section>
+
+      <section className="grid gap-6 xl:grid-cols-2">
+        {agents.map((agent) => {
+          const active = liveSession?.activeAgentKeys?.includes(agent.agentKey) ?? false;
+          const status = cardStatus(agent, liveSession);
+          const configured = isConfigured(agent);
+          const actionKeyPrefix = `${agent.agentKey}:`;
+
+          return (
+            <article
+              key={agent.agentKey}
+              className="rounded-[30px] border border-zinc-800 bg-zinc-950/70 p-6"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-3">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-3xl border border-zinc-800 bg-indigo-500/10 text-3xl text-indigo-300">
+                    {agent.agentKey === "sourcing-serper" ? "S" : "T"}
+                  </div>
+                  <div>
+                    <h2 className="text-3xl font-semibold text-white">{agentLabel(agent.agentKey)}</h2>
+                    <p className="mt-2 text-sm text-zinc-400">{agentDescription(agent.agentKey)}</p>
+                  </div>
+                </div>
+                <span
+                  className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+                    status === "EN LIGNE"
+                      ? "bg-emerald-500/15 text-emerald-200"
+                      : status === "EN PAUSE"
+                        ? "bg-amber-500/15 text-amber-200"
+                        : status === "BLOQUE"
+                          ? "bg-rose-500/15 text-rose-200"
+                          : status === "PRET"
+                            ? "bg-sky-500/15 text-sky-200"
+                            : "bg-zinc-800 text-zinc-300"
+                  }`}
+                >
+                  {status}
+                </span>
+              </div>
+
+              <div className="mt-6 grid grid-cols-3 gap-3">
+                <MiniMetric label="Sources" value={String(agent.metrics?.sources ?? 0)} />
+                <MiniMetric label="Leads" value={String(agent.metrics?.prospects ?? 0)} />
+                <MiniMetric label="Conv." value={String(agent.metrics?.conversions ?? 0)} />
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-4 text-sm text-zinc-300">
+                <div>
+                  <span className="text-zinc-500">KW:</span>{" "}
+                  {agent.keywords?.trim() ? agent.keywords : "N/A"}
+                </div>
+                <div className="mt-2">
+                  <span className="text-zinc-500">SRC:</span> {sourceLabel(agent.source)}
+                </div>
+                <div className="mt-2">
+                  <span className="text-zinc-500">Secteur:</span> {agent.defaultSector || "N/A"}
+                </div>
+                <div className="mt-2">
+                  <span className="text-zinc-500">Zone:</span> {agent.defaultZone || "N/A"}
+                </div>
+              </div>
+
+              {!configured ? (
+                <div className="mt-4 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                  Cet agent doit etre configure completement avant de pouvoir demarrer.
+                </div>
+              ) : null}
+
+              <div className="mt-5 flex flex-wrap gap-3">
+                {!active ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleAgentAction(agent.agentKey, liveSession ? "resume" : "start")}
+                    disabled={!configured || busyAgent?.startsWith(actionKeyPrefix)}
+                    className="rounded-2xl bg-amber-400 px-5 py-3 text-sm font-semibold text-black transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+                  >
+                    {busyAgent === `${agent.agentKey}:${liveSession ? "resume" : "start"}`
+                      ? "Patiente..."
+                      : liveSession
+                        ? "Reprendre"
+                        : "Lancer"}
+                  </button>
+                ) : null}
+
+                {active ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void handleAgentAction(agent.agentKey, "pause")}
+                      disabled={busyAgent === `${agent.agentKey}:pause`}
+                      className="rounded-2xl border border-zinc-700 px-5 py-3 text-sm font-medium text-zinc-200 transition hover:border-zinc-500 disabled:cursor-not-allowed"
+                    >
+                      {busyAgent === `${agent.agentKey}:pause` ? "Patiente..." : "Pause"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleAgentAction(agent.agentKey, "stop")}
+                      disabled={busyAgent === `${agent.agentKey}:stop`}
+                      className="rounded-2xl border border-rose-500/35 bg-rose-500/10 px-5 py-3 text-sm font-medium text-rose-200 transition hover:bg-rose-500/15 disabled:cursor-not-allowed"
+                    >
+                      {busyAgent === `${agent.agentKey}:stop` ? "Patiente..." : "Arreter"}
+                    </button>
+                  </>
+                ) : null}
+
+                <button
+                  type="button"
+                  onClick={() => setEditing(agent)}
+                  className="rounded-2xl border border-zinc-700 px-5 py-3 text-sm font-medium text-zinc-200 transition hover:border-zinc-500"
+                >
+                  Configurer
+                </button>
+              </div>
+
+              <div className="mt-5 text-xs text-zinc-500">
+                Dernier run: {formatDateTime(agent.metrics?.lastRunAt)}
+              </div>
+            </article>
+          );
+        })}
+      </section>
+
+      <section className="rounded-[30px] border border-zinc-800 bg-zinc-950/70 p-6">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <div className="text-xs uppercase tracking-[0.28em] text-zinc-500">Flux live fusionne</div>
+            <h2 className="mt-3 text-2xl font-semibold text-white">Evenements recents</h2>
+          </div>
+          <Link href="/user/history" className="text-sm font-medium text-amber-300 hover:text-amber-200">
+            Voir l’historique
+          </Link>
+        </div>
+
+        <div className="mt-6 space-y-3">
+          {liveFeed.length === 0 ? (
+            <EmptyState>
+              Aucun evenement live pour le moment. Demarre un agent depuis sa carte pour voir apparaitre les cycles ici.
+            </EmptyState>
+          ) : (
+            liveFeed.slice(0, 12).map((event) => (
+              <div key={event.id} className="rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-white">{event.message}</div>
+                    <div className="mt-1 text-xs text-zinc-500">
+                      {event.agentKey ? agentLabel(event.agentKey) : "Session"} • {event.type}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge>{event.sessionId.slice(0, 8)}</Badge>
+                    {event.cycleIndex != null ? <Badge>Cycle {event.cycleIndex}</Badge> : null}
+                  </div>
+                </div>
+                <div className="mt-3 text-xs text-zinc-500">{formatDateTime(event.createdAt)}</div>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+
+      {editing ? (
+        <AgentConfigModal
+          agent={editing}
+          saving={saving}
+          onClose={() => setEditing(null)}
+          onSave={handleSave}
+        />
+      ) : null}
+    </div>
   );
 }
 
-function AgentCard({
+function AgentConfigModal({
   agent,
-  runs,
-  providers,
-  busy,
-  onConfigure,
-  onToggle
+  saving,
+  onClose,
+  onSave,
 }: {
-  agent: SaasAgentProfile;
-  runs: SaasSourcingRun[];
-  providers: WorkspacePayload["providers"] | null;
-  busy: boolean;
-  onConfigure: () => void;
-  onToggle: () => void;
+  agent: AgentConfig;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (payload: SavePayload) => void;
 }) {
-  const agentRuns = runs.filter((run) => run.agentKey === agent.agentKey);
-  const prospects = agentRuns.reduce((sum, run) => sum + run.foundCount, 0);
-  const completed = agentRuns.filter((run) => run.status === "completed").length;
-  const sourceLabel = labelForSource(agent.missionConfig.source);
-  const sourceReady = agent.missionConfig.source === "serper" ? providers?.serper.configured : providers?.tavily.configured;
-  const lastRun = agentRuns[0] ?? null;
-  const averageProspects = completed ? Math.round(prospects / completed) : 0;
+  const [name, setName] = useState(agent.name || agentLabel(agent.agentKey));
+  const [source, setSource] = useState(agent.source || (agent.agentKey === "sourcing-serper" ? "serper" : "tavily"));
+  const [keywords, setKeywords] = useState(agent.keywords || "");
+  const [instructions, setInstructions] = useState(agent.instructions || "");
+  const [defaultSector, setDefaultSector] = useState(agent.defaultSector || "");
+  const [defaultZone, setDefaultZone] = useState(agent.defaultZone || "");
+  const [defaultTargetCount, setDefaultTargetCount] = useState(
+    String(agent.defaultTargetCount ?? 10),
+  );
+  const [enabled, setEnabled] = useState(agent.enabled ?? true);
 
   return (
-    <article className="rounded-[28px] border border-line bg-panel p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-start gap-5">
-          <div className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl ${agentCardTint(agent.agentKey)}`}>
-            <Search className="h-7 w-7 text-indigo-200" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-8">
+      <div className="w-full max-w-4xl rounded-[32px] border border-zinc-800 bg-zinc-950 p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-xs uppercase tracking-[0.28em] text-zinc-500">Configuration agent</div>
+            <h2 className="mt-3 text-3xl font-semibold text-white">{agentLabel(agent.agentKey)}</h2>
           </div>
-          <div className="min-w-0">
-            <h3 className="text-[2rem] font-bold leading-tight text-white">{agent.displayName}</h3>
-            <p className="mt-2 max-w-xl text-sm leading-7 text-muted">{agentDescription(agent.agentKey)}</p>
-          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-2xl border border-zinc-700 px-4 py-2 text-sm text-zinc-300"
+          >
+            Fermer
+          </button>
         </div>
 
-        <span className={`rounded-full px-3 py-1 text-xs font-black uppercase tracking-wide ${
-          agent.isEnabled ? (sourceReady ? "bg-indigo-500 text-white" : "bg-zinc-700 text-zinc-200") : "bg-amber-500/20 text-amber-200"
-        }`}>
-          {agent.isEnabled ? (sourceReady ? "En ligne" : "A configurer") : "En pause"}
-        </span>
-      </div>
+        <div className="mt-6 grid gap-4 md:grid-cols-2">
+          <Field label="Nom agent">
+            <input value={name} onChange={(event) => setName(event.target.value)} className="w-full rounded-2xl border border-zinc-800 bg-black px-4 py-3 text-sm text-white outline-none" />
+          </Field>
+          <Field label="Source">
+            <select value={source} onChange={(event) => setSource(event.target.value)} className="w-full rounded-2xl border border-zinc-800 bg-black px-4 py-3 text-sm text-white outline-none">
+              <option value="serper">Serper</option>
+              <option value="tavily">Tavily</option>
+            </select>
+          </Field>
+          <Field label="Mots-cles">
+            <textarea value={keywords} onChange={(event) => setKeywords(event.target.value)} rows={4} className="w-full rounded-2xl border border-zinc-800 bg-black px-4 py-3 text-sm text-white outline-none" />
+          </Field>
+          <Field label="Instructions">
+            <textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} rows={4} className="w-full rounded-2xl border border-zinc-800 bg-black px-4 py-3 text-sm text-white outline-none" />
+          </Field>
+          <Field label="Secteur par defaut">
+            <input value={defaultSector} onChange={(event) => setDefaultSector(event.target.value)} className="w-full rounded-2xl border border-zinc-800 bg-black px-4 py-3 text-sm text-white outline-none" />
+          </Field>
+          <Field label="Zone par defaut">
+            <input value={defaultZone} onChange={(event) => setDefaultZone(event.target.value)} className="w-full rounded-2xl border border-zinc-800 bg-black px-4 py-3 text-sm text-white outline-none" />
+          </Field>
+          <Field label="Nombre de prospects par defaut">
+            <input value={defaultTargetCount} onChange={(event) => setDefaultTargetCount(event.target.value)} className="w-full rounded-2xl border border-zinc-800 bg-black px-4 py-3 text-sm text-white outline-none" />
+          </Field>
+          <Field label="Statut">
+            <label className="flex h-full items-center gap-3 rounded-2xl border border-zinc-800 bg-black px-4 py-3 text-sm text-zinc-200">
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(event) => setEnabled(event.target.checked)}
+              />
+              Agent active
+            </label>
+          </Field>
+        </div>
 
-      <div className="mt-6 grid gap-3 sm:grid-cols-3">
-        <MetricCard label="Source" value={sourceLabel} />
-        <MetricCard label="Prospects" value={String(prospects)} />
-        <MetricCard label="Runs" value={String(completed)} />
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-2xl border border-zinc-700 px-5 py-3 text-sm font-medium text-zinc-200"
+          >
+            Annuler
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() =>
+              onSave({
+                name,
+                source,
+                keywords,
+                instructions,
+                defaultSector,
+                defaultZone,
+                defaultTargetCount: Number.parseInt(defaultTargetCount, 10) || 10,
+                enabled,
+              })
+            }
+            className="rounded-2xl bg-amber-400 px-5 py-3 text-sm font-semibold text-black disabled:bg-zinc-700 disabled:text-zinc-400"
+          >
+            {saving ? "Enregistrement..." : "Sauvegarder"}
+          </button>
+        </div>
       </div>
+    </div>
+  );
+}
 
-      <div className="mt-4 rounded-2xl border border-line bg-ink px-4 py-4 text-sm text-zinc-200">
-        <p className="font-semibold text-zinc-100">KW: {agent.missionConfig.keywords.trim() || "N/A"}</p>
-        <p className="mt-2">SRC: {sourceLabel}</p>
-        <p className="mt-2">Moyenne: {averageProspects} prospect(s) par run</p>
-        <p className="mt-2">Derniere activite: {lastRun ? new Date(lastRun.createdAt).toLocaleString("fr-FR") : "Aucune"}</p>
-      </div>
-
-      <div className="mt-4 flex gap-3">
-        <Link
-          href={`/user/sourcing?agent=${agent.agentKey}`}
-          className={`inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl border border-line px-4 text-sm font-semibold ${
-            agent.isEnabled ? "bg-ink text-white hover:border-gold/40" : "pointer-events-none bg-zinc-900 text-zinc-500"
-          }`}
-        >
-          <Play className="h-4 w-4" />
-          Lancer avec {sourceLabel}
-        </Link>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onToggle}
-          className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl border border-line bg-zinc-800 px-4 text-sm font-semibold text-zinc-100 hover:border-gold/40 disabled:opacity-60"
-        >
-          <Pause className="h-4 w-4" />
-          {agent.isEnabled ? "Pause" : "Reprendre"}
-        </button>
-        <button
-          type="button"
-          onClick={onConfigure}
-          className="inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-line bg-zinc-800 text-zinc-100 hover:border-gold/40"
-        >
-          <Wand2 className="h-4 w-4" />
-        </button>
-      </div>
-    </article>
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <div className="text-xs uppercase tracking-[0.24em] text-zinc-500">{label}</div>
+      {children}
+    </div>
   );
 }
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-line bg-ink p-4 text-center">
-      <p className="text-[11px] font-black uppercase tracking-[0.18em] text-zinc-500">{label}</p>
-      <p className="mt-2 text-2xl font-black text-white">{value}</p>
+    <div className="rounded-3xl border border-zinc-800 bg-zinc-950/70 p-5">
+      <div className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">{label}</div>
+      <div className="mt-3 text-3xl font-semibold text-white">{value}</div>
     </div>
   );
 }
 
-function TabButton({
-  active,
-  onClick,
-  icon: Icon,
-  label
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: typeof Target;
-  label: string;
-}) {
+function MiniMetric({ label, value }: { label: string; value: string }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`inline-flex h-10 items-center gap-2 rounded-2xl px-4 text-sm font-medium ${
-        active ? "bg-gold/10 text-gold" : "bg-ink text-zinc-300"
-      }`}
-    >
-      <Icon className="h-4 w-4" />
-      {label}
-    </button>
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-4 text-center">
+      <div className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">{label}</div>
+      <div className="mt-2 text-2xl font-semibold text-white">{value}</div>
+    </div>
   );
 }
 
-function Label({
-  text,
-  icon: Icon
-}: {
-  text: string;
-  icon?: typeof Search;
-}) {
+function Badge({ children }: { children: ReactNode }) {
   return (
-    <span className="flex items-center gap-2 text-sm font-medium text-zinc-300">
-      {Icon ? <Icon className="h-4 w-4 text-gold" /> : null}
-      {text}
+    <span className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-300">
+      {children}
     </span>
   );
 }
 
-function TextField({
-  label,
-  value,
-  onChange,
-  placeholder
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-}) {
+function EmptyState({ children }: { children: ReactNode }) {
   return (
-    <label className="grid gap-2 text-sm">
-      <span className="font-medium text-zinc-300">{label}</span>
-      <input
-        value={value}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-11 rounded-2xl border border-line bg-ink px-4 outline-none transition focus:border-gold/60"
-      />
-    </label>
-  );
-}
-
-function TextareaField({
-  label,
-  value,
-  onChange,
-  placeholder,
-  icon
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  icon?: typeof Search;
-}) {
-  return (
-    <label className="grid gap-2 text-sm">
-      <Label text={label} icon={icon} />
-      <textarea
-        value={value}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-        className="min-h-[120px] rounded-2xl border border-line bg-ink px-4 py-3 outline-none transition focus:border-gold/60"
-      />
-    </label>
-  );
-}
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={checked}
-      onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-7 w-12 items-center rounded-full transition ${checked ? "bg-gold" : "bg-zinc-700"}`}
-    >
-      <span
-        className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${checked ? "translate-x-6" : "translate-x-1"}`}
-      />
-    </button>
-  );
-}
-
-function InfoBlock({ title, text }: { title: string; text: string }) {
-  return (
-    <div className="rounded-2xl border border-line bg-ink p-4">
-      <p className="font-semibold text-zinc-100">{title}</p>
-      <p className="mt-2 text-sm leading-6 text-muted">{text}</p>
+    <div className="rounded-2xl border border-dashed border-zinc-800 px-5 py-8 text-center text-sm text-zinc-400">
+      {children}
     </div>
   );
-}
-
-function agentRank(agentKey: string) {
-  if (agentKey === "sourcing-serper") return 0;
-  if (agentKey === "sourcing-tavily") return 1;
-  return 2;
-}
-
-function labelForSource(source: SourcingMissionConfig["source"]) {
-  return source === "tavily" ? "Tavily" : "Serper";
-}
-
-function agentDescription(agentKey: string) {
-  if (agentKey === "sourcing-tavily") {
-    return "Analyse les pages trouvees, extrait les signaux utiles et aide a mieux qualifier les prospects.";
-  }
-  return "Cherche rapidement des entreprises, annuaires et pistes web pour lancer une premiere liste de prospects.";
-}
-
-function agentCardTint(agentKey: string) {
-  if (agentKey === "sourcing-tavily") return "bg-violet-500/12";
-  return "bg-indigo-500/12";
 }
