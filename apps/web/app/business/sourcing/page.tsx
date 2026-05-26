@@ -963,7 +963,7 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
                 </label>
               </div>
 
-              <div className={`grid gap-4 ${isSearch ? "xl:grid-cols-[1.35fr_1fr_180px]" : "xl:grid-cols-[1.1fr_1.1fr_1fr_180px]"}`}>
+              <div className={`grid gap-4 ${isSearch ? "xl:grid-cols-[1.35fr_1fr_180px]" : "xl:grid-cols-[1.35fr_1fr_180px]"}`}>
                 <label className="grid gap-2 text-sm">
                   <span className="text-zinc-300">Cle API</span>
                   <input
@@ -983,22 +983,6 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
                     className="h-11 rounded-xl border border-line bg-ink px-3 text-zinc-100 outline-none focus:border-gold/60"
                   />
                 </label>
-                {!isSearch ? (
-                  <label className="grid gap-2 text-sm">
-                    <span className="text-zinc-300">Modele par defaut</span>
-                    <select
-                      value={provider.defaultModel}
-                      onChange={(event) => updateProvider(provider.id, { defaultModel: event.target.value })}
-                      className="h-11 rounded-xl border border-line bg-ink px-3 text-zinc-100 outline-none focus:border-gold/60"
-                    >
-                      {(provider.models?.length ? provider.models : [provider.defaultModel]).map((model) => (
-                        <option key={model} value={model}>
-                          {model}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
                 <div className="flex items-end">
                   <button
                     type="button"
@@ -1015,6 +999,11 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
               <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
                 <span>Source cle: {provider.apiKeySource}</span>
                 {provider.modelMessage ? <span className="rounded-full border border-line px-2 py-1">{provider.modelMessage}</span> : null}
+                {!isSearch && provider.models?.length ? (
+                  <span className="rounded-full border border-line px-2 py-1">
+                    {provider.models.length} modele(s) disponible(s)
+                  </span>
+                ) : null}
               </div>
             </section>
           );
