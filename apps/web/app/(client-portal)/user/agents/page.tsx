@@ -33,6 +33,7 @@ type LiveSession = {
   activeAgentKeys: string[];
   pausedAgentKeys: string[];
   brief: string;
+  agentBriefs?: Partial<Record<"sourcing-serper" | "sourcing-tavily", string>>;
   stopReason?: string | null;
   cycleCount: number;
   lastCycleAt?: string | null;
@@ -257,7 +258,7 @@ function agentStatus(agent: AgentConfig, session: LiveSession | null) {
 export default function UserAgentsPage() {
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [live, setLive] = useState<LivePayload | null>(null);
-  const [brief, setBrief] = useState("");
+  const [briefs, setBriefs] = useState<Partial<Record<"sourcing-serper" | "sourcing-tavily", string>>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -272,7 +273,18 @@ export default function UserAgentsPage() {
       const rawAgents = Array.isArray(agentsPayload) ? agentsPayload : agentsPayload.agents ?? [];
       setAgents(rawAgents.map((item) => normalizeAgent(item)));
       setLive(livePayload);
-      setBrief((current) => current || livePayload.session?.brief || livePayload.liveSession?.brief || "");
+      setBriefs((current) => ({
+        "sourcing-serper":
+          current["sourcing-serper"] ??
+          livePayload.session?.agentBriefs?.["sourcing-serper"] ??
+          livePayload.liveSession?.agentBriefs?.["sourcing-serper"] ??
+          "",
+        "sourcing-tavily":
+          current["sourcing-tavily"] ??
+          livePayload.session?.agentBriefs?.["sourcing-tavily"] ??
+          livePayload.liveSession?.agentBriefs?.["sourcing-tavily"] ??
+          "",
+      }));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Impossible de charger le centre live.");
@@ -292,15 +304,15 @@ export default function UserAgentsPage() {
   const quota = live?.quota ?? null;
 
   const runAction = useCallback(
-    async (action: "start" | "pause" | "resume" | "stop", agentKey?: string) => {
+    async (action: "start" | "pause" | "resume" | "stop", agentKey?: "sourcing-serper" | "sourcing-tavily") => {
       const key = agentKey ? `${action}:${agentKey}` : `${action}:all`;
       setBusyAction(key);
       try {
         const payload =
           action === "start"
             ? agentKey
-              ? { agentKey, brief }
-              : { brief }
+              ? { agentKey, brief: (briefs[agentKey] ?? "").trim() }
+              : {}
             : agentKey
               ? { agentKey }
               : {};
@@ -312,83 +324,15 @@ export default function UserAgentsPage() {
         setBusyAction(null);
       }
     },
-    [brief, load],
+    [briefs, load],
   );
 
   const totalRuns = useMemo(() => agents.reduce((sum, item) => sum + (item.metrics?.runs ?? 0), 0), [agents]);
   const totalProspects = useMemo(() => agents.reduce((sum, item) => sum + (item.metrics?.prospects ?? 0), 0), [agents]);
-  const readyAgents = useMemo(() => agents.filter((agent) => isConfigured(agent) && agent.enabled !== false), [agents]);
 
   return (
-    <SaasPortalShell
-      title="Agents"
-      subtitle="Configure une intention courte, puis lance Serper, Tavily, ou les deux sans formulaire technique."
-    >
+    <SaasPortalShell title="Agents" subtitle="Chaque agent a sa propre zone de demande. Ecris, puis lance seulement celui dont tu as besoin.">
       <div className="space-y-8">
-        <section className="rounded-[30px] border border-zinc-800 bg-zinc-950/70 p-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="max-w-3xl">
-              <div className="text-xs uppercase tracking-[0.28em] text-zinc-500">Brief utilisateur</div>
-              <h2 className="mt-3 text-2xl font-semibold text-white">Dis simplement ce que tu veux chercher</h2>
-              <p className="mt-2 text-sm text-zinc-400">
-                Le moteur combine ton brief avec les templates admin de Serper et Tavily. Tu n’as pas besoin de toucher aux champs techniques.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-zinc-300">
-              Session live: <span className="font-semibold text-white">{liveSessionLabel(liveSession)}</span>
-            </div>
-          </div>
-
-          <textarea
-            value={brief}
-            onChange={(event) => setBrief(event.target.value)}
-            placeholder="Ex: Je cherche des cabinets comptables a Paris avec une page contact et des services PME."
-            rows={4}
-            className="mt-6 w-full resize-none rounded-3xl border border-zinc-800 bg-black px-5 py-4 text-sm text-white outline-none placeholder:text-zinc-600 focus:border-gold/40"
-          />
-
-          <div className="mt-5 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => void runAction("start")}
-              disabled={!readyAgents.length || !brief.trim() || busyAction === "start:all"}
-              className="inline-flex min-h-12 min-w-[170px] items-center justify-center rounded-2xl bg-gold px-5 py-3 text-sm font-semibold text-black shadow-gold transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:border disabled:border-zinc-700 disabled:bg-zinc-900 disabled:text-zinc-300 disabled:shadow-none"
-            >
-              {busyAction === "start:all" ? "Patiente..." : "Lancer les 2"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void runAction("pause")}
-              disabled={!liveSession?.activeAgentKeys.length || busyAction === "pause:all"}
-              className="inline-flex min-h-12 min-w-[140px] items-center justify-center rounded-2xl border border-zinc-700 px-5 py-3 text-sm font-medium text-zinc-200 transition hover:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {busyAction === "pause:all" ? "Patiente..." : "Pause globale"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void runAction("resume")}
-              disabled={!liveSession?.pausedAgentKeys.length || busyAction === "resume:all"}
-              className="inline-flex min-h-12 min-w-[150px] items-center justify-center rounded-2xl border border-amber-500/35 bg-amber-500/10 px-5 py-3 text-sm font-medium text-amber-100 transition hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {busyAction === "resume:all" ? "Patiente..." : "Reprendre tout"}
-            </button>
-            <button
-              type="button"
-              onClick={() => void runAction("stop")}
-              disabled={!liveSession || busyAction === "stop:all"}
-              className="inline-flex min-h-12 min-w-[150px] items-center justify-center rounded-2xl border border-rose-500/35 bg-rose-500/10 px-5 py-3 text-sm font-medium text-rose-200 transition hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {busyAction === "stop:all" ? "Patiente..." : "Arreter tous"}
-            </button>
-          </div>
-
-          {liveSession?.stopReason ? (
-            <div className="mt-4 rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-zinc-400">
-              {liveSession.stopReason}
-            </div>
-          ) : null}
-        </section>
-
         {error ? (
           <div className="rounded-3xl border border-rose-500/30 bg-rose-500/10 px-5 py-4 text-sm text-rose-200">
             {error}
@@ -399,8 +343,15 @@ export default function UserAgentsPage() {
           <MetricCard label="Agents" value={loading ? "…" : String(agents.length)} />
           <MetricCard label="Runs" value={loading ? "…" : String(totalRuns)} />
           <MetricCard label="Prospects" value={loading ? "…" : String(totalProspects)} />
+          <MetricCard label="Session" value={loading ? "…" : liveSessionLabel(liveSession)} />
           <MetricCard label="Runs restants" value={quota?.monthlyRunsRemaining == null ? "Illimite" : String(quota.monthlyRunsRemaining)} />
         </section>
+
+        {liveSession?.stopReason ? (
+          <div className="rounded-3xl border border-zinc-800 bg-zinc-950/70 px-5 py-4 text-sm text-zinc-300">
+            {liveSession.stopReason}
+          </div>
+        ) : null}
 
         <section className="grid gap-6 xl:grid-cols-2">
           {agents.map((agent) => {
@@ -409,6 +360,7 @@ export default function UserAgentsPage() {
             const issues = getConfigurationIssues(agent);
             const isRunning = liveSession?.activeAgentKeys.includes(agent.agentKey) && liveSession.status === "running";
             const isPaused = liveSession?.pausedAgentKeys.includes(agent.agentKey) ?? false;
+            const agentBrief = briefs[agent.agentKey as "sourcing-serper" | "sourcing-tavily"] ?? "";
 
             return (
               <article key={agent.agentKey} className="rounded-[30px] border border-zinc-800 bg-zinc-950/70 p-6">
@@ -466,6 +418,26 @@ export default function UserAgentsPage() {
                   ) : null}
                 </div>
 
+                <div className="mt-5 space-y-2">
+                  <div className="text-xs uppercase tracking-[0.24em] text-zinc-500">Ta demande pour cet agent</div>
+                  <textarea
+                    value={agentBrief}
+                    onChange={(event) =>
+                      setBriefs((current) => ({
+                        ...current,
+                        [agent.agentKey]: event.target.value,
+                      }))
+                    }
+                    placeholder={
+                      agent.agentKey === "sourcing-serper"
+                        ? "Ex: Trouve des cabinets comptables a Paris avec une page contact."
+                        : "Ex: Analyse des cabinets comptables a Paris et retiens les plus serieux."
+                    }
+                    rows={4}
+                    className="w-full resize-none rounded-3xl border border-zinc-800 bg-black px-5 py-4 text-sm text-white outline-none placeholder:text-zinc-600 focus:border-gold/40"
+                  />
+                </div>
+
                 {!configured ? (
                   <div className="mt-4 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
                     Cet agent doit etre complete dans l’admin sourcing avant utilisation: {issues.join(", ")}.
@@ -476,8 +448,8 @@ export default function UserAgentsPage() {
                   {!isRunning && !isPaused ? (
                     <button
                       type="button"
-                      onClick={() => void runAction("start", agent.agentKey)}
-                      disabled={!configured || !brief.trim() || busyAction === `start:${agent.agentKey}`}
+                      onClick={() => void runAction("start", agent.agentKey as "sourcing-serper" | "sourcing-tavily")}
+                      disabled={!configured || !agentBrief.trim() || busyAction === `start:${agent.agentKey}`}
                       className="inline-flex min-h-12 min-w-[170px] items-center justify-center rounded-2xl bg-gold px-5 py-3 text-sm font-semibold text-black shadow-gold transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:border disabled:border-zinc-700 disabled:bg-zinc-900 disabled:text-zinc-300 disabled:shadow-none"
                     >
                       {busyAction === `start:${agent.agentKey}` ? "Patiente..." : `Lancer ${agent.agentKey === "sourcing-serper" ? "Découverte" : "Qualification"}`}
@@ -488,7 +460,7 @@ export default function UserAgentsPage() {
                     <>
                       <button
                         type="button"
-                        onClick={() => void runAction("resume", agent.agentKey)}
+                        onClick={() => void runAction("resume", agent.agentKey as "sourcing-serper" | "sourcing-tavily")}
                         disabled={busyAction === `resume:${agent.agentKey}`}
                         className="inline-flex min-h-12 min-w-[150px] items-center justify-center rounded-2xl border border-amber-500/35 bg-amber-500/10 px-5 py-3 text-sm font-medium text-amber-100 transition hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-50"
                       >
@@ -496,7 +468,7 @@ export default function UserAgentsPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => void runAction("stop", agent.agentKey)}
+                        onClick={() => void runAction("stop", agent.agentKey as "sourcing-serper" | "sourcing-tavily")}
                         disabled={busyAction === `stop:${agent.agentKey}`}
                         className="inline-flex min-h-12 min-w-[140px] items-center justify-center rounded-2xl border border-rose-500/35 bg-rose-500/10 px-5 py-3 text-sm font-medium text-rose-200 transition hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-50"
                       >
@@ -509,7 +481,7 @@ export default function UserAgentsPage() {
                     <>
                       <button
                         type="button"
-                        onClick={() => void runAction("pause", agent.agentKey)}
+                        onClick={() => void runAction("pause", agent.agentKey as "sourcing-serper" | "sourcing-tavily")}
                         disabled={busyAction === `pause:${agent.agentKey}`}
                         className="inline-flex min-h-12 min-w-[140px] items-center justify-center rounded-2xl border border-zinc-700 px-5 py-3 text-sm font-medium text-zinc-200 transition hover:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-50"
                       >
@@ -517,7 +489,7 @@ export default function UserAgentsPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => void runAction("stop", agent.agentKey)}
+                        onClick={() => void runAction("stop", agent.agentKey as "sourcing-serper" | "sourcing-tavily")}
                         disabled={busyAction === `stop:${agent.agentKey}`}
                         className="inline-flex min-h-12 min-w-[140px] items-center justify-center rounded-2xl border border-rose-500/35 bg-rose-500/10 px-5 py-3 text-sm font-medium text-rose-200 transition hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-50"
                       >
@@ -552,7 +524,7 @@ export default function UserAgentsPage() {
           <div className="mt-6 space-y-3">
             {liveFeed.length === 0 ? (
               <EmptyState>
-                Aucun evenement live pour le moment. Renseigne ton brief puis lance Serper, Tavily, ou les deux.
+                Aucun evenement live pour le moment. Ecris une demande dans la carte de l’agent puis lance-le.
               </EmptyState>
             ) : (
               liveFeed.slice(0, 12).map((event) => (

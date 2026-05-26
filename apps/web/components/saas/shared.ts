@@ -191,6 +191,7 @@ export type UserSourcingLiveSession = {
   activeAgentKeys: string[];
   pausedAgentKeys: string[];
   brief: string;
+  agentBriefs: Partial<Record<"sourcing-serper" | "sourcing-tavily", string>>;
   stopReason: string | null;
   cycleCount: number;
   lastCycleAt: string | null;

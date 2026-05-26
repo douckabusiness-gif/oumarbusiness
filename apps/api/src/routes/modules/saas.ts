@@ -264,6 +264,7 @@ type SaasSourcingSession = {
   activeAgentKeys: string[];
   pausedAgentKeys?: string[];
   brief?: string;
+  agentBriefs?: Partial<Record<"sourcing-serper" | "sourcing-tavily", string>>;
   stopReason?: string;
   cycleCount: number;
   lastCycleAt?: string;
@@ -834,6 +835,12 @@ function parseSourcingSession(value: unknown): SaasSourcingSession | null {
   const activeAgentKeys = Array.isArray(value.activeAgentKeys) ? value.activeAgentKeys.map(String).map((item) => item.trim()).filter(Boolean) : [];
   const pausedAgentKeys = Array.isArray(value.pausedAgentKeys) ? value.pausedAgentKeys.map(String).map((item) => item.trim()).filter(Boolean) : [];
   const brief = typeof value.brief === "string" ? value.brief : undefined;
+  const agentBriefs = isObject(value.agentBriefs)
+    ? {
+        ...(typeof value.agentBriefs["sourcing-serper"] === "string" ? { "sourcing-serper": value.agentBriefs["sourcing-serper"] } : {}),
+        ...(typeof value.agentBriefs["sourcing-tavily"] === "string" ? { "sourcing-tavily": value.agentBriefs["sourcing-tavily"] } : {})
+      }
+    : undefined;
   const stopReason = typeof value.stopReason === "string" ? value.stopReason : undefined;
   const cycleCount = typeof value.cycleCount === "number" ? value.cycleCount : 0;
   const lastCycleAt = typeof value.lastCycleAt === "string" ? value.lastCycleAt : undefined;
@@ -852,6 +859,7 @@ function parseSourcingSession(value: unknown): SaasSourcingSession | null {
     activeAgentKeys,
     ...(pausedAgentKeys.length ? { pausedAgentKeys } : {}),
     ...(brief ? { brief } : {}),
+    ...(agentBriefs && Object.keys(agentBriefs).length ? { agentBriefs } : {}),
     ...(stopReason ? { stopReason } : {}),
     cycleCount,
     ...(lastCycleAt ? { lastCycleAt } : {}),
@@ -2844,6 +2852,7 @@ function toPublicSourcingSession(session: SaasSourcingSession) {
     activeAgentKeys: session.activeAgentKeys,
     pausedAgentKeys: session.pausedAgentKeys ?? [],
     brief: session.brief ?? "",
+    agentBriefs: session.agentBriefs ?? {},
     stopReason: session.stopReason ?? null,
     cycleCount: session.cycleCount,
     lastCycleAt: session.lastCycleAt ?? null,
@@ -3997,7 +4006,11 @@ saasRouter.post("/agents/live/start", async (req, res, next) => {
         currentAgentKey: undefined,
         activeAgentKeys: nextActiveKeys,
         pausedAgentKeys: nextPausedKeys,
-        brief: activeBrief
+        brief: activeBrief,
+        agentBriefs: {
+          ...(session.agentBriefs ?? {}),
+          ...(requestedAgentKey && brief ? { [requestedAgentKey]: brief } : {})
+        }
       }));
       if (!resumed) return res.status(404).json({ error: "Session live introuvable." });
 
@@ -4031,7 +4044,8 @@ saasRouter.post("/agents/live/start", async (req, res, next) => {
       activeAgentKeys: agentKeysToStart,
       pausedAgentKeys: [],
       cycleCount: 0,
-      brief: activeBrief
+      brief: activeBrief,
+      agentBriefs: requestedAgentKey && brief ? { [requestedAgentKey]: brief } : {}
     };
     await saveSourcingLiveSession(session);
     await appendSourcingLiveEvent({
@@ -5026,7 +5040,7 @@ async function processSourcingLiveSession(sessionId: string) {
         sessionId: session.id,
         cycleIndex,
         dedupeKeys: liveKeys,
-        brief: session.brief ?? ""
+        brief: session.agentBriefs?.[agent.agentKey as "sourcing-serper" | "sourcing-tavily"] ?? session.brief ?? ""
       });
 
       if (result.ok) {
