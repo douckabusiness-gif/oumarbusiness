@@ -837,6 +837,8 @@ function GlobalAgentsTab() {
           const isSerper = agent.source === "serper";
           const editorSection = editorSections[agent.agentKey] ?? "mission";
           const toolsValue = Array.isArray(form.allowedTools) ? form.allowedTools.join(", ") : "";
+          const productName = agent.agentKey === "sourcing-serper" ? "Agent Découverte" : "Agent Qualification";
+          const productSubtitle = isSerper ? "Template produit — découverte rapide" : "Template produit — qualification approfondie";
 
           return (
             <article
@@ -851,9 +853,9 @@ function GlobalAgentsTab() {
                     <Radar className={`h-6 w-6 ${isSerper ? "text-violet-400" : "text-sky-400"}`} />
                   </div>
                   <div>
-                    <p className="font-bold text-zinc-100">{agent.displayName}</p>
+                    <p className="font-bold text-zinc-100">{productName}</p>
                     <p className={`mt-0.5 text-xs font-semibold uppercase tracking-widest ${isSerper ? "text-violet-400" : "text-sky-400"}`}>
-                      {agent.source} · {isSerper ? "Decouverte rapide" : "Qualification approfondie"}
+                      {productSubtitle}
                     </p>
                   </div>
                 </div>
@@ -1059,6 +1061,7 @@ function GlobalAgentsTab() {
                       {SOURCING_MODELS.find((m) => m.id === agent.modelId)?.label ?? agent.modelId ?? (isSerper ? "GPT-4o mini" : "Claude 3.5 Sonnet")}
                     </span>
                   </p>
+                  <p><span className="text-zinc-400">Source interne:</span> {isSerper ? "Serper" : "Tavily"}</p>
                   {agent.defaultKeywords && <p><span className="text-zinc-400">Mots-cles:</span> {agent.defaultKeywords}</p>}
                   {agent.defaultSector && <p><span className="text-zinc-400">Secteur:</span> {agent.defaultSector}</p>}
                   {agent.defaultZone && <p><span className="text-zinc-400">Zone:</span> {agent.defaultZone}</p>}

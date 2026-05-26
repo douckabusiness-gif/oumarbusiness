@@ -96,11 +96,11 @@ type AgentPayload = Array<{
 
 function agentLabel(agentKey: string) {
   if (agentKey === "sourcing-serper") {
-    return "Agent Serper";
+    return "Agent Découverte";
   }
 
   if (agentKey === "sourcing-tavily") {
-    return "Agent Tavily";
+    return "Agent Qualification";
   }
 
   return "Agent sourcing";
@@ -108,11 +108,11 @@ function agentLabel(agentKey: string) {
 
 function agentDescription(agentKey: string) {
   if (agentKey === "sourcing-serper") {
-    return "Decouverte rapide — trouve vite des pistes et entreprises.";
+    return "Trouve rapidement de nouvelles entreprises et pistes pertinentes.";
   }
 
   if (agentKey === "sourcing-tavily") {
-    return "Qualification profonde — lit et analyse les pages en detail.";
+    return "Analyse les prospects trouves et retient les plus serieux.";
   }
 
   return "Agent de sourcing.";
@@ -136,7 +136,7 @@ function normalizeAgent(payload: {
   return {
     id: payload.id,
     agentKey: payload.agentKey,
-    name: payload.displayName?.trim() || agentLabel(payload.agentKey),
+    name: agentLabel(payload.agentKey),
     enabled: payload.isEnabled ?? true,
     source: payload.missionConfig?.source ?? null,
     keywords: payload.missionConfig?.keywords ?? null,
@@ -222,13 +222,6 @@ function getConfigurationIssues(agent: AgentConfig) {
     issues.push("nombre cible invalide");
   }
   return issues;
-}
-
-function sourceLabel(value?: string | null) {
-  if (!value) return "Web";
-  if (value === "serper") return "Serper";
-  if (value === "tavily") return "Tavily";
-  return value;
 }
 
 function liveSessionLabel(session: LiveSession | null) {
@@ -458,16 +451,19 @@ export default function UserAgentsPage() {
                     {agent.keywords?.trim() ? agent.keywords : "Mission par defaut non definie"}
                   </div>
                   <div className="mt-2">
-                    <span className="text-zinc-500">Source:</span> {sourceLabel(agent.source)}
-                  </div>
-                  <div className="mt-2">
-                    <span className="text-zinc-500">Qualification:</span>{" "}
-                    {agent.instructions?.trim() ? agent.instructions : "Aucune consigne enregistree"}
+                    <span className="text-zinc-500">Mode:</span>{" "}
+                    {agent.agentKey === "sourcing-serper" ? "Exploration rapide" : "Analyse approfondie"}
                   </div>
                   <div className="mt-2">
                     <span className="text-zinc-500">Cible par cycle:</span>{" "}
                     {agent.defaultTargetCount ?? "N/A"} prospects
                   </div>
+                  {(agent.defaultSector || agent.defaultZone) ? (
+                    <div className="mt-2">
+                      <span className="text-zinc-500">Cadre par defaut:</span>{" "}
+                      {[agent.defaultSector, agent.defaultZone].filter(Boolean).join(" • ")}
+                    </div>
+                  ) : null}
                 </div>
 
                 {!configured ? (
@@ -484,7 +480,7 @@ export default function UserAgentsPage() {
                       disabled={!configured || !brief.trim() || busyAction === `start:${agent.agentKey}`}
                       className="inline-flex min-h-12 min-w-[170px] items-center justify-center rounded-2xl bg-gold px-5 py-3 text-sm font-semibold text-black shadow-gold transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:border disabled:border-zinc-700 disabled:bg-zinc-900 disabled:text-zinc-300 disabled:shadow-none"
                     >
-                      {busyAction === `start:${agent.agentKey}` ? "Patiente..." : `Lancer ${agent.agentKey === "sourcing-serper" ? "Serper" : "Tavily"}`}
+                      {busyAction === `start:${agent.agentKey}` ? "Patiente..." : `Lancer ${agent.agentKey === "sourcing-serper" ? "Découverte" : "Qualification"}`}
                     </button>
                   ) : null}
 

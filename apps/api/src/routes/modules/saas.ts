@@ -1053,8 +1053,8 @@ function agentRank(agentKey: string) {
 }
 
 function agentLabel(agentKey: string) {
-  if (agentKey === "sourcing-serper") return "Agent Serper";
-  if (agentKey === "sourcing-tavily") return "Agent Tavily";
+  if (agentKey === "sourcing-serper") return "Agent Découverte";
+  if (agentKey === "sourcing-tavily") return "Agent Qualification";
   return "Agent sourcing";
 }
 
@@ -1103,7 +1103,13 @@ function parseSourcingGlobalAgent(value: unknown): SourcingGlobalAgent | null {
   const agentKey =
     value.agentKey === "sourcing-serper" ? "sourcing-serper" : value.agentKey === "sourcing-tavily" ? "sourcing-tavily" : null;
   if (!agentKey) return null;
-  const displayName = typeof value.displayName === "string" ? value.displayName : agentKey === "sourcing-serper" ? "Agent Serper" : "Agent Tavily";
+  const rawDisplayName = typeof value.displayName === "string" ? value.displayName.trim() : "";
+  const displayName =
+    rawDisplayName && rawDisplayName !== "Agent Serper" && rawDisplayName !== "Agent Tavily"
+      ? rawDisplayName
+      : agentKey === "sourcing-serper"
+        ? "Agent Découverte"
+        : "Agent Qualification";
   const isEnabled = typeof value.isEnabled === "boolean" ? value.isEnabled : true;
   const source: "serper" | "tavily" = agentKey === "sourcing-serper" ? "serper" : "tavily";
   const defaultKeywords = typeof value.defaultKeywords === "string" ? value.defaultKeywords : "";
@@ -1173,7 +1179,7 @@ async function getGlobalAgents(): Promise<SourcingGlobalAgent[]> {
   const defaults: SourcingGlobalAgent[] = [
     {
       agentKey: "sourcing-serper",
-      displayName: "Agent Serper",
+      displayName: "Agent Découverte",
       isEnabled: true,
       source: "serper",
       modelId: "gpt-4o-mini",
@@ -1191,7 +1197,7 @@ async function getGlobalAgents(): Promise<SourcingGlobalAgent[]> {
     },
     {
       agentKey: "sourcing-tavily",
-      displayName: "Agent Tavily",
+      displayName: "Agent Qualification",
       isEnabled: true,
       source: "tavily",
       modelId: "claude-3-5-sonnet",
@@ -1590,23 +1596,23 @@ function createDefaultAgentProfiles(company: SaasCompany, moduleKey: ModuleKey):
   return [
     createDefaultAgentProfile(company, moduleKey, {
       agentKey: "sourcing-serper",
-      displayName: "Agent Serper",
+      displayName: "Agent Découverte",
       missionSource: "serper",
       systemPrompt:
         "Tu es l'agent Serper. Tu trouves rapidement des entreprises, annuaires et pages utiles depuis la recherche web publique. Tu privilegies la decouverte rapide et la pertinence locale.",
       personality: "Rapide, methodique, oriente decouverte et tri initial.",
-      identity: `Agent Serper de ${company.name}. Tu ouvres le terrain et proposes une premiere liste de prospects.`,
+      identity: `Agent Découverte de ${company.name}. Tu ouvres le terrain et proposes une premiere liste de prospects.`,
       userContext: "Tu identifies des pistes web visibles et prepares une premiere selection exploitable.",
       allowedTools: ["webScraper", "searchKnowledge"]
     }),
     createDefaultAgentProfile(company, moduleKey, {
       agentKey: "sourcing-tavily",
-      displayName: "Agent Tavily",
+      displayName: "Agent Qualification",
       missionSource: "tavily",
       systemPrompt:
         "Tu es l'agent Tavily. Tu analyses les pages trouvees, extrais les signaux utiles et qualifies les prospects avec plus de profondeur. Tu ne resumes que ce qui est visible dans les sources reelles.",
       personality: "Analytique, rigoureux, oriente qualification et synthese.",
-      identity: `Agent Tavily de ${company.name}. Tu enrichis les pistes et mets en avant les meilleurs prospects.`,
+      identity: `Agent Qualification de ${company.name}. Tu enrichis les pistes et mets en avant les meilleurs prospects.`,
       userContext: "Tu lis les contenus publics, resumes les points utiles et aides a prioriser les prospects.",
       allowedTools: ["webScraper", "searchKnowledge", "summarizeThread"]
     })
@@ -2508,7 +2514,9 @@ async function ensureAgentProfiles(company: SaasCompany) {
   );
   if (legacySourcingProfile) {
     legacySourcingProfile.agentKey = "sourcing-serper";
-    legacySourcingProfile.displayName = legacySourcingProfile.displayName || "Agent Serper";
+    legacySourcingProfile.displayName = legacySourcingProfile.displayName && legacySourcingProfile.displayName !== "Agent Serper"
+      ? legacySourcingProfile.displayName
+      : "Agent Découverte";
     legacySourcingProfile.missionConfig = {
       ...legacySourcingProfile.missionConfig,
       source: "serper"
@@ -4824,10 +4832,10 @@ async function executeUserSourcingRun(
 
   const providerStatus = await getSearchProviderStatus();
   if (sourcingAgent.missionConfig.source === "serper" && !providerStatus.serper.configured) {
-    return { ok: false, code: "provider", error: "L'agent Serper n'est pas pret: configure Serper dans les parametres IA." };
+    return { ok: false, code: "provider", error: "L'agent Découverte n'est pas pret: configure la source de recherche dans les parametres IA." };
   }
   if (sourcingAgent.missionConfig.source === "tavily" && !providerStatus.tavily.configured) {
-    return { ok: false, code: "provider", error: "L'agent Tavily n'est pas pret: configure Tavily dans les parametres IA." };
+    return { ok: false, code: "provider", error: "L'agent Qualification n'est pas pret: configure la source de recherche dans les parametres IA." };
   }
 
   const missionNotes = [
