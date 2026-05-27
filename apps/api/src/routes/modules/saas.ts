@@ -4097,6 +4097,38 @@ saasRouter.get("/prospects", async (req, res, next) => {
   }
 });
 
+saasRouter.get("/history", async (req, res, next) => {
+  try {
+    const context = await resolveAuthenticatedContext(req);
+    if (!context) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session utilisateur invalide." });
+    }
+
+    const runtime = await getCompanyRuntime(context.company);
+    const runs = runtime.runs
+      .filter((run) => run.moduleKey === "sourcing-commercial")
+      .slice()
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .map((run) => ({
+        id: run.id,
+        agentKey: run.agentKey,
+        status: run.status,
+        keywords: run.brief,
+        sector: run.sector || null,
+        zone: run.zone || null,
+        keptCount: run.foundCount,
+        createdAt: run.createdAt,
+        sessionId: run.sessionId ?? null,
+        cycleIndex: run.cycleIndex ?? null
+      }));
+
+    return res.json({ runs });
+  } catch (error) {
+    next(error);
+  }
+});
+
 saasRouter.post("/agents/live/start", async (req, res, next) => {
   try {
     const context = await resolveAuthenticatedContext(req);
