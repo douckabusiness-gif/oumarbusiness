@@ -1195,6 +1195,36 @@ const saveSourcingPlans = (items: SourcingPlan[]) => saveStoredArray(SAAS_SOURCI
 const loadGlobalAgentsRaw = () => loadStoredArray(SAAS_GLOBAL_AGENTS_KEY, parseSourcingGlobalAgent);
 const saveGlobalAgents = (items: SourcingGlobalAgent[]) => saveStoredArray(SAAS_GLOBAL_AGENTS_KEY, items);
 
+function preferNonEmptyString(value: string | undefined, fallback: string) {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function mergeGlobalAgentTemplate(base: SourcingGlobalAgent, existing: SourcingGlobalAgent | undefined) {
+  if (!existing) return base;
+  return {
+    ...base,
+    ...existing,
+    displayName: preferNonEmptyString(existing.displayName, base.displayName),
+    source: existing.source || base.source,
+    modelProvider: preferNonEmptyString(existing.modelProvider, base.modelProvider),
+    modelId: preferNonEmptyString(existing.modelId, base.modelId),
+    defaultKeywords: preferNonEmptyString(existing.defaultKeywords, base.defaultKeywords),
+    qualificationInstructions: preferNonEmptyString(existing.qualificationInstructions, base.qualificationInstructions),
+    defaultSector: typeof existing.defaultSector === "string" ? existing.defaultSector : base.defaultSector,
+    defaultZone: typeof existing.defaultZone === "string" ? existing.defaultZone : base.defaultZone,
+    defaultTargetCount:
+      typeof existing.defaultTargetCount === "number" && existing.defaultTargetCount > 0
+        ? existing.defaultTargetCount
+        : base.defaultTargetCount,
+    systemPrompt: preferNonEmptyString(existing.systemPrompt, base.systemPrompt),
+    personality: preferNonEmptyString(existing.personality, base.personality),
+    identity: preferNonEmptyString(existing.identity, base.identity),
+    userContext: preferNonEmptyString(existing.userContext, base.userContext),
+    allowedTools: Array.isArray(existing.allowedTools) && existing.allowedTools.length ? existing.allowedTools : base.allowedTools,
+    updatedAt: preferNonEmptyString(existing.updatedAt, base.updatedAt)
+  };
+}
+
 async function getGlobalAgents(): Promise<SourcingGlobalAgent[]> {
   const stored = await loadGlobalAgentsRaw();
   const now = new Date().toISOString();
@@ -1206,15 +1236,19 @@ async function getGlobalAgents(): Promise<SourcingGlobalAgent[]> {
       source: "serper",
       modelProvider: "openai",
       modelId: "",
-      defaultKeywords: "",
-      qualificationInstructions: "",
+      defaultKeywords:
+        "entreprise, societe, PME, B2B, services, commerce, industrie, logistique, immobilier, sante, education, distribution, site officiel, page contact, telephone, email, WhatsApp, dirigeant, gerant, responsable",
+      qualificationInstructions:
+        "Trouver rapidement des entreprises reelles et actives correspondant a la demande du client. Privilegier les sites officiels, pages contact, pages services et coordonnees visibles. Exclure annuaires, blogs, actualites, offres d'emploi, comparateurs, agregateurs et pages sans identite claire. Ne rien inventer et dedoublonner les resultats.",
       defaultSector: "",
       defaultZone: "",
-      defaultTargetCount: 20,
-      systemPrompt: "Tu es l'agent Serper. Tu trouves rapidement des entreprises, annuaires et pages utiles depuis la recherche web publique. Tu privilegies la decouverte rapide et la pertinence locale.",
-      personality: "Rapide, methodique, oriente decouverte et tri initial.",
-      identity: "Template global Serper pour ouvrir le terrain et proposer une premiere liste de prospects.",
-      userContext: "Tu identifies des pistes web visibles et prepares une premiere selection exploitable.",
+      defaultTargetCount: 12,
+      systemPrompt:
+        "Tu es Agent Decouverte. Tu transformes le brief du client en recherche web efficace pour trouver rapidement de vraies entreprises pertinentes. Tu explores large mais tu gardes une exigence minimale de qualite: entreprise reelle, activite claire, presence web exploitable et contact visible si possible. Tu n'inventes jamais d'informations et tu rejettes les pages parasites.",
+      personality: "Rapide, methodique, opportuniste mais propre, oriente volume utile et tri initial.",
+      identity: "Template produit de decouverte rapide pour ouvrir le terrain sur des secteurs, pays et villes varies.",
+      userContext:
+        "Tu t'adaptes a toute demande client en combinant le brief, le secteur, la zone et les signaux visibles sur le web pour produire une premiere selection exploitable.",
       allowedTools: ["webScraper", "searchKnowledge"],
       updatedAt: now
     },
@@ -1225,29 +1259,24 @@ async function getGlobalAgents(): Promise<SourcingGlobalAgent[]> {
       source: "tavily",
       modelProvider: "claude",
       modelId: "",
-      defaultKeywords: "",
-      qualificationInstructions: "",
+      defaultKeywords:
+        "site officiel, services, a propos, equipe, contact, email, telephone, WhatsApp, clients, references, cas d'usage, coordonnees, presence digitale, decisionnaire",
+      qualificationInstructions:
+        "Analyser en profondeur les pistes trouvees et ne retenir que les prospects credibles et commercialement utiles. Verifier l'activite reelle, la clarte des services, la presence de coordonnees, la coherence geographique et les signaux de serieux. Ecarter les pages d'information generale, contenus editoriaux, annuaires, offres d'emploi, agregateurs et structures peu claires. Prioriser les prospects faciles a contacter et adaptes au besoin du client.",
       defaultSector: "",
       defaultZone: "",
-      defaultTargetCount: 10,
-      systemPrompt: "Tu es l'agent Tavily. Tu analyses les pages trouvees, extrais les signaux utiles et qualifies les prospects avec plus de profondeur. Tu ne resumes que ce qui est visible dans les sources reelles.",
-      personality: "Analytique, rigoureux, oriente qualification et synthese.",
-      identity: "Template global Tavily pour enrichir les pistes et mettre en avant les meilleurs prospects.",
-      userContext: "Tu lis les contenus publics, resumes les points utiles et aides a prioriser les prospects.",
+      defaultTargetCount: 8,
+      systemPrompt:
+        "Tu es Agent Qualification. Tu prends un brief client et des pistes web, puis tu analyses les pages publiques pour retenir les prospects les plus serieux. Tu privilegies la precision, la verification et la priorisation. Tu ne confirmes que ce qui est visible dans les sources reelles, tu rejettes les signaux faibles et tu n'inventes jamais.",
+      personality: "Analytique, rigoureux, selectif, oriente verification et priorisation.",
+      identity: "Template produit de qualification approfondie pour transformer des pistes en prospects credibles, quel que soit le secteur.",
+      userContext:
+        "Tu t'adaptes a toute demande client en evaluant la qualite reelle du prospect, son adequation au besoin et la facilite de prise de contact.",
       allowedTools: ["webScraper", "searchKnowledge", "summarizeThread"],
       updatedAt: now
     }
   ];
-  return defaults.map((def) => {
-    const existing = stored.find((s) => s.agentKey === def.agentKey);
-    if (!existing) return def;
-    return {
-      ...def,
-      ...existing,
-      modelProvider: existing.modelProvider || def.modelProvider,
-      modelId: existing.modelId || def.modelId
-    };
-  });
+  return defaults.map((def) => mergeGlobalAgentTemplate(def, stored.find((s) => s.agentKey === def.agentKey)));
 }
 
 const loadCompanies = () => loadStoredArray(SAAS_COMPANIES_KEY, parseCompany);
@@ -1633,10 +1662,11 @@ function createDefaultAgentProfiles(company: SaasCompany, moduleKey: ModuleKey):
       displayName: "Agent Découverte",
       missionSource: "serper",
       systemPrompt:
-        "Tu es l'agent Serper. Tu trouves rapidement des entreprises, annuaires et pages utiles depuis la recherche web publique. Tu privilegies la decouverte rapide et la pertinence locale.",
-      personality: "Rapide, methodique, oriente decouverte et tri initial.",
-      identity: `Agent Découverte de ${company.name}. Tu ouvres le terrain et proposes une premiere liste de prospects.`,
-      userContext: "Tu identifies des pistes web visibles et prepares une premiere selection exploitable.",
+        "Tu es Agent Decouverte. Tu transformes le brief du client en recherche web efficace pour trouver rapidement de vraies entreprises pertinentes. Tu explores large mais tu gardes une exigence minimale de qualite: entreprise reelle, activite claire, presence web exploitable et contact visible si possible. Tu n'inventes jamais d'informations et tu rejettes les pages parasites.",
+      personality: "Rapide, methodique, opportuniste mais propre, oriente volume utile et tri initial.",
+      identity: `Agent Découverte de ${company.name}. Tu ouvres le terrain sur tout type de marche et proposes une premiere liste de prospects utilisables.`,
+      userContext:
+        "Tu t'adaptes a la demande du client, au secteur et a la zone pour produire une premiere selection de pistes pertinentes.",
       allowedTools: ["webScraper", "searchKnowledge"]
     }),
     createDefaultAgentProfile(company, moduleKey, {
@@ -1644,13 +1674,26 @@ function createDefaultAgentProfiles(company: SaasCompany, moduleKey: ModuleKey):
       displayName: "Agent Qualification",
       missionSource: "tavily",
       systemPrompt:
-        "Tu es l'agent Tavily. Tu analyses les pages trouvees, extrais les signaux utiles et qualifies les prospects avec plus de profondeur. Tu ne resumes que ce qui est visible dans les sources reelles.",
-      personality: "Analytique, rigoureux, oriente qualification et synthese.",
-      identity: `Agent Qualification de ${company.name}. Tu enrichis les pistes et mets en avant les meilleurs prospects.`,
-      userContext: "Tu lis les contenus publics, resumes les points utiles et aides a prioriser les prospects.",
+        "Tu es Agent Qualification. Tu prends un brief client et des pistes web, puis tu analyses les pages publiques pour retenir les prospects les plus serieux. Tu privilegies la precision, la verification et la priorisation. Tu ne confirmes que ce qui est visible dans les sources reelles, tu rejettes les signaux faibles et tu n'inventes jamais.",
+      personality: "Analytique, rigoureux, selectif, oriente verification et priorisation.",
+      identity: `Agent Qualification de ${company.name}. Tu enrichis les pistes et aides a retenir les prospects les plus credibles pour toute demande client.`,
+      userContext:
+        "Tu t'adaptes au brief du client pour verifier la qualite reelle des prospects, leur adequation au besoin et la facilite de prise de contact.",
       allowedTools: ["webScraper", "searchKnowledge", "summarizeThread"]
     })
   ];
+}
+
+function isIncompleteSourcingProfile(profile: SaasAgentProfile) {
+  if (profile.moduleKey !== "sourcing-commercial") return false;
+  return !profile.systemPrompt.trim() ||
+    !profile.personality.trim() ||
+    !profile.identity.trim() ||
+    !profile.userContext.trim() ||
+    !profile.missionConfig.keywords.trim() ||
+    !profile.missionConfig.qualificationInstructions.trim() ||
+    profile.missionConfig.defaultTargetCount <= 0 ||
+    profile.allowedTools.length === 0;
 }
 
 function applyGlobalAgentTemplateToProfile(
@@ -2570,9 +2613,44 @@ async function ensureAgentProfiles(company: SaasCompany) {
         : createDefaultAgentProfiles(company, module.moduleKey);
 
     for (const defaultProfile of defaults) {
-      if (!existingForModule.some((item) => item.agentKey === defaultProfile.agentKey)) {
+      const existingProfile = existingForModule.find((item) => item.agentKey === defaultProfile.agentKey);
+      if (!existingProfile) {
         nextProfiles.push(defaultProfile);
         changed = true;
+        continue;
+      }
+
+      if (module.moduleKey === "sourcing-commercial" && isIncompleteSourcingProfile(existingProfile)) {
+        const index = nextProfiles.findIndex((item) => item.id === existingProfile.id);
+        if (index >= 0) {
+          nextProfiles[index] = {
+            ...existingProfile,
+            displayName: existingProfile.displayName.trim() || defaultProfile.displayName,
+            modelProvider: existingProfile.modelProvider.trim() || defaultProfile.modelProvider,
+            modelId: existingProfile.modelId.trim() || defaultProfile.modelId,
+            systemPrompt: existingProfile.systemPrompt.trim() || defaultProfile.systemPrompt,
+            personality: existingProfile.personality.trim() || defaultProfile.personality,
+            identity: existingProfile.identity.trim() || defaultProfile.identity,
+            userContext: existingProfile.userContext.trim() || defaultProfile.userContext,
+            allowedTools: existingProfile.allowedTools.length ? existingProfile.allowedTools : defaultProfile.allowedTools,
+            missionConfig: {
+              ...existingProfile.missionConfig,
+              source: existingProfile.missionConfig.source || defaultProfile.missionConfig.source,
+              keywords: existingProfile.missionConfig.keywords.trim() || defaultProfile.missionConfig.keywords,
+              qualificationInstructions:
+                existingProfile.missionConfig.qualificationInstructions.trim() ||
+                defaultProfile.missionConfig.qualificationInstructions,
+              defaultSector: existingProfile.missionConfig.defaultSector,
+              defaultZone: existingProfile.missionConfig.defaultZone,
+              defaultTargetCount:
+                existingProfile.missionConfig.defaultTargetCount > 0
+                  ? existingProfile.missionConfig.defaultTargetCount
+                  : defaultProfile.missionConfig.defaultTargetCount
+            },
+            updatedAt: new Date().toISOString()
+          };
+          changed = true;
+        }
       }
     }
   }
