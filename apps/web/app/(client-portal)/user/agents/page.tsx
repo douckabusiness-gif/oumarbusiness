@@ -57,12 +57,19 @@ type LiveQuota = {
   canRun: boolean;
 };
 
+type LiveAccess = {
+  subscriptionActive: boolean;
+  canRun: boolean;
+  reason?: string | null;
+};
+
 type LivePayload = {
   session?: LiveSession | null;
   liveSession?: LiveSession | null;
   feed?: LiveEvent[];
   liveFeed?: LiveEvent[];
   quota?: LiveQuota | null;
+  access?: LiveAccess | null;
 };
 
 type AgentPayload = Array<{
@@ -259,6 +266,7 @@ export default function UserAgentsPage() {
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [live, setLive] = useState<LivePayload | null>(null);
   const [briefs, setBriefs] = useState<Partial<Record<"sourcing-serper" | "sourcing-tavily", string>>>({});
+  const [actionErrors, setActionErrors] = useState<Partial<Record<"sourcing-serper" | "sourcing-tavily" | "global", string>>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -302,11 +310,18 @@ export default function UserAgentsPage() {
   const liveSession = live?.session ?? live?.liveSession ?? null;
   const liveFeed = live?.feed ?? live?.liveFeed ?? [];
   const quota = live?.quota ?? null;
+  const access = live?.access ?? null;
 
   const runAction = useCallback(
     async (action: "start" | "pause" | "resume" | "stop", agentKey?: "sourcing-serper" | "sourcing-tavily") => {
       const key = agentKey ? `${action}:${agentKey}` : `${action}:all`;
       setBusyAction(key);
+      setError(null);
+      if (agentKey) {
+        setActionErrors((current) => ({ ...current, [agentKey]: "", global: "" }));
+      } else {
+        setActionErrors((current) => ({ ...current, global: "" }));
+      }
       try {
         const payload =
           action === "start"
@@ -319,7 +334,13 @@ export default function UserAgentsPage() {
         await postJson(`/api/sourcing/agents/live/${action}`, payload);
         await load();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Action impossible.");
+        const message = err instanceof Error ? err.message : "Action impossible.";
+        setError(message);
+        if (agentKey) {
+          setActionErrors((current) => ({ ...current, [agentKey]: message }));
+        } else {
+          setActionErrors((current) => ({ ...current, global: message }));
+        }
       } finally {
         setBusyAction(null);
       }
@@ -361,6 +382,13 @@ export default function UserAgentsPage() {
             const isRunning = liveSession?.activeAgentKeys.includes(agent.agentKey) && liveSession.status === "running";
             const isPaused = liveSession?.pausedAgentKeys.includes(agent.agentKey) ?? false;
             const agentBrief = briefs[agent.agentKey as "sourcing-serper" | "sourcing-tavily"] ?? "";
+            const agentError = actionErrors[agent.agentKey as "sourcing-serper" | "sourcing-tavily"]?.trim() || "";
+            const accessBlocked = access?.canRun === false;
+            const accessReason = access?.reason?.trim() || "";
+            const configurationReason = !configured
+              ? `Cet agent doit etre complete dans l’admin sourcing avant utilisation: ${issues.join(", ")}.`
+              : "";
+            const cardMessage = agentError || configurationReason || (accessBlocked ? accessReason : "");
 
             return (
               <article key={agent.agentKey} className="rounded-[30px] border border-zinc-800 bg-zinc-950/70 p-6">
@@ -438,9 +466,15 @@ export default function UserAgentsPage() {
                   />
                 </div>
 
-                {!configured ? (
-                  <div className="mt-4 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-                    Cet agent doit etre complete dans l’admin sourcing avant utilisation: {issues.join(", ")}.
+                {cardMessage ? (
+                  <div
+                    className={`mt-4 rounded-2xl px-4 py-3 text-sm ${
+                      agentError
+                        ? "border border-rose-500/25 bg-rose-500/10 text-rose-100"
+                        : "border border-amber-500/25 bg-amber-500/10 text-amber-100"
+                    }`}
+                  >
+                    {cardMessage}
                   </div>
                 ) : null}
 
@@ -449,7 +483,7 @@ export default function UserAgentsPage() {
                     <button
                       type="button"
                       onClick={() => void runAction("start", agent.agentKey as "sourcing-serper" | "sourcing-tavily")}
-                      disabled={!configured || !agentBrief.trim() || busyAction === `start:${agent.agentKey}`}
+                      disabled={!configured || !agentBrief.trim() || busyAction === `start:${agent.agentKey}` || accessBlocked}
                       className="inline-flex min-h-12 min-w-[170px] items-center justify-center rounded-2xl bg-gold px-5 py-3 text-sm font-semibold text-black shadow-gold transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:border disabled:border-zinc-700 disabled:bg-zinc-900 disabled:text-zinc-300 disabled:shadow-none"
                     >
                       {busyAction === `start:${agent.agentKey}` ? "Patiente..." : `Lancer ${agent.agentKey === "sourcing-serper" ? "Découverte" : "Qualification"}`}

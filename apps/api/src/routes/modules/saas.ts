@@ -4011,6 +4011,12 @@ saasRouter.get("/agents/live", async (req, res, next) => {
         .filter((run) => run.createdAt >= getCurrentMonthStartIso())
         .reduce((sum, run) => sum + run.foundCount, 0)
     });
+    const subscriptionActive = Boolean(subscription && isAccessibleSubscriptionStatus(subscription.status));
+    const accessReason = !subscriptionActive
+      ? "Active un abonnement sourcing pour lancer les agents."
+      : !quota.canRun
+        ? "Ton quota mensuel est atteint pour le moment."
+        : null;
     const feed = runtime.liveEvents
       .filter((event) => !session || event.sessionId === session.id)
       .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
@@ -4019,7 +4025,12 @@ saasRouter.get("/agents/live", async (req, res, next) => {
     res.json({
       session: session ? toPublicSourcingSession(session) : null,
       feed: feed.map(toPublicSourcingLiveEvent),
-      quota
+      quota,
+      access: {
+        subscriptionActive,
+        canRun: quota.canRun,
+        reason: accessReason
+      }
     });
   } catch (error) {
     next(error);
