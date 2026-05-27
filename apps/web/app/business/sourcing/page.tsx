@@ -118,7 +118,7 @@ function normalizeProvider(provider: ApiProviderConfig): ApiProviderConfig {
     status: "idle",
     message: undefined,
     modelStatus: "idle",
-    modelMessage: provider.models?.length ? `${provider.models.length} modele(s) disponible(s)` : undefined,
+    modelMessage: undefined,
     chatStatus: "idle",
     chatMessage: undefined
   };
@@ -831,10 +831,12 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
       });
       const data = (await response.json()) as { ok?: boolean; models?: string[]; error?: string };
       if (!response.ok || !data.ok) throw new Error(data.error ?? "Modeles indisponibles");
-      const models = data.models?.length ? data.models : provider.models;
+      const models = data.models ?? [];
       updateProvider(provider.id, {
         models,
-        defaultModel: models.includes(provider.defaultModel) ? provider.defaultModel : models[0] ?? provider.defaultModel,
+        defaultModel: models.length > 0
+          ? (models.includes(provider.defaultModel) ? provider.defaultModel : models[0]!)
+          : provider.defaultModel,
         apiKey: "",
         apiKeyConfigured: provider.apiKeyConfigured || Boolean(typedApiKey),
         apiKeySource: typedApiKey ? "database" : provider.apiKeySource,
@@ -966,13 +968,81 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
               <div className={`grid gap-4 ${isSearch ? "xl:grid-cols-[1.35fr_1fr_180px]" : "xl:grid-cols-[1.35fr_1fr_180px]"}`}>
                 <label className="grid gap-2 text-sm">
                   <span className="text-zinc-300">Cle API</span>
-                  <input
-                    type="password"
-                    value={provider.apiKey ?? ""}
-                    placeholder={provider.apiKeyConfigured ? "Cle deja configuree" : "Colle la cle API"}
-                    onChange={(event) => updateProvider(provider.id, { apiKey: event.target.value, clearApiKey: false })}
-                    className="h-11 rounded-xl border border-line bg-ink px-3 text-zinc-100 outline-none focus:border-gold/60"
-                  />
+                  {provider.apiKeyConfigured && !provider.isReplacingKey && !provider.clearApiKey ? (
+                    <div className="rounded-2xl border border-line bg-ink p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <p className="text-sm font-semibold text-emerald-300">Cle enregistree</p>
+                          <p className="text-xs text-zinc-500">
+                            La cle est bien sauvegardee et reste volontairement masquee pour la securite.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateProvider(provider.id, {
+                                isReplacingKey: true,
+                                clearApiKey: false,
+                                apiKey: ""
+                              })
+                            }
+                            className="inline-flex h-9 items-center gap-2 rounded-xl border border-line px-3 text-xs font-semibold text-zinc-200 hover:border-gold/40"
+                          >
+                            <Edit2 className="h-3.5 w-3.5" />
+                            Remplacer
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateProvider(provider.id, {
+                                clearApiKey: true,
+                                isReplacingKey: false,
+                                apiKey: ""
+                              })
+                            }
+                            className="inline-flex h-9 items-center gap-2 rounded-xl border border-rose-500/30 px-3 text-xs font-semibold text-rose-300 hover:border-rose-400/40"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Supprimer
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : provider.clearApiKey ? (
+                    <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <p className="text-sm font-semibold text-rose-300">Suppression en attente</p>
+                          <p className="text-xs text-zinc-500">
+                            Clique sur <span className="font-semibold text-zinc-300">Enregistrer</span> pour supprimer cette cle.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateProvider(provider.id, {
+                              clearApiKey: false,
+                              isReplacingKey: false,
+                              apiKey: ""
+                            })
+                          }
+                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-line px-3 text-xs font-semibold text-zinc-200 hover:border-gold/40"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                          Annuler
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <input
+                      type="password"
+                      value={provider.apiKey ?? ""}
+                      placeholder={provider.isReplacingKey ? "Colle la nouvelle cle API" : "Colle la cle API"}
+                      onChange={(event) => updateProvider(provider.id, { apiKey: event.target.value, clearApiKey: false })}
+                      className="h-11 rounded-xl border border-line bg-ink px-3 text-zinc-100 outline-none focus:border-gold/60"
+                    />
+                  )}
                 </label>
                 <label className="grid gap-2 text-sm">
                   <span className="text-zinc-300">Base URL</span>
@@ -995,6 +1065,29 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
                   </button>
                 </div>
               </div>
+
+              {!isSearch && provider.models?.length > 0 && (
+                <div className="mt-4">
+                  <label className="grid gap-2 text-sm">
+                    <span className="text-zinc-300">Modele par defaut</span>
+                    <div className="relative max-w-md">
+                      <select
+                        value={provider.defaultModel}
+                        onChange={(event) => updateProvider(provider.id, { defaultModel: event.target.value })}
+                        className="h-11 w-full appearance-none rounded-xl border border-line bg-ink px-3 pr-9 text-sm text-zinc-100 outline-none focus:border-gold/60"
+                      >
+                        {provider.models.map((model) => (
+                          <option key={model} value={model}>{model}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                    </div>
+                  </label>
+                  <p className="mt-1.5 text-xs text-zinc-600">
+                    Ce modele sera utilise par tous les agents sourcing configures sur ce fournisseur.
+                  </p>
+                </div>
+              )}
 
               <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
                 <span>Source cle: {provider.apiKeySource}</span>
@@ -1230,6 +1323,18 @@ function GlobalAgentsTab({ apiSettingsVersion }: { apiSettingsVersion: number })
                         ))}
                       </select>
                       <p className="mt-1 text-xs text-zinc-600">Choisi d'abord le fournisseur branche a ta cle API.</p>
+                      {(() => {
+                        const prov = chatProviders.find((p) => p.id === selectedProviderId);
+                        const model = prov?.defaultModel;
+                        if (!model || model === "search") return null;
+                        return (
+                          <p className="mt-2 text-xs text-zinc-500">
+                            Modele actif:{" "}
+                            <span className="font-semibold text-gold">{model}</span>
+                            <span className="ml-1 text-zinc-600">(defini dans Parametres API)</span>
+                          </p>
+                        );
+                      })()}
                     </div>
                   </div>
                   {editorSection === "mission" ? (
@@ -1380,6 +1485,19 @@ function GlobalAgentsTab({ apiSettingsVersion }: { apiSettingsVersion: number })
                       {chatProviders.find((provider) => provider.id === agent.modelProvider)?.name ?? agent.modelProvider}
                     </span>
                   </p>
+                  {(() => {
+                    const prov = chatProviders.find((p) => p.id === agent.modelProvider);
+                    const model = prov?.defaultModel;
+                    if (!model || model === "search") return null;
+                    return (
+                      <p>
+                        <span className="text-zinc-400">Modele:</span>{" "}
+                        <span className="rounded-full bg-white/5 px-2 py-0.5 text-xs font-semibold text-zinc-200">
+                          {model}
+                        </span>
+                      </p>
+                    );
+                  })()}
                   <p><span className="text-zinc-400">Source interne:</span> {isSerper ? "Serper" : "Tavily"}</p>
                   {agent.defaultKeywords && <p><span className="text-zinc-400">Mots-cles:</span> {agent.defaultKeywords}</p>}
                   {agent.defaultSector && <p><span className="text-zinc-400">Secteur:</span> {agent.defaultSector}</p>}
