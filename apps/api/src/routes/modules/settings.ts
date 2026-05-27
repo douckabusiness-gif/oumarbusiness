@@ -338,19 +338,6 @@ type IncomingAiProviderSettings = StoredAiProviderSettings & {
   clearApiKey?: boolean;
 };
 
-const fallbackModels: Record<string, string[]> = {
-  groq: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
-  openai: ["gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini"],
-  claude: ["claude-sonnet-4-20250514", "claude-3-7-sonnet-latest", "claude-3-5-haiku-latest"],
-  gemini: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-flash"],
-  glm: ["glm-4.5", "glm-4", "glm-4-air"],
-  "kimi-k2": ["kimi-k2", "moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
-  qwen: ["qwen-plus", "qwen-max", "qwen-turbo"],
-  "nvidia-nim": ["nvidia/llama-3.1-nemotron", "meta/llama-3.1-70b-instruct", "mistralai/mixtral-8x7b-instruct-v0.1"],
-  "fal-ai": ["fal-ai/flux-pro", "fal-ai/flux/dev", "fal-ai/kling-video", "fal-ai/minimax-speech"],
-  tavily: ["search", "extract", "crawl"],
-  serper: ["search", "places", "news", "images"]
-};
 
 const AI_PROVIDERS_SETTINGS_KEY = "ai-providers";
 const chatCapableProviderIds = new Set(["groq", "openai", "claude", "gemini", "glm", "kimi-k2", "qwen", "nvidia-nim"]);
@@ -449,7 +436,7 @@ function buildRuntimeAiProviders(overrides: StoredAiProviderSettings[]): AiProvi
     const models =
       override?.models && override.models.length > 0
         ? override.models
-        : fallbackModels[provider.id] ?? [provider.defaultModel];
+        : [];
     const desiredDefaultModel = override?.defaultModel?.trim() || provider.defaultModel;
     const defaultModel = models.includes(desiredDefaultModel) ? desiredDefaultModel : (models[0] ?? desiredDefaultModel);
 
@@ -663,12 +650,8 @@ async function fetchModels(provider: string, apiKey: string, baseUrl: string): P
     return modelNamesFromPayload(await response.json());
   }
 
-  if (provider === "fal-ai") {
-    return fallbackModels[provider] ?? [];
-  }
-
-  if (provider === "tavily" || provider === "serper") {
-    return fallbackModels[provider] ?? [];
+  if (provider === "fal-ai" || provider === "tavily" || provider === "serper") {
+    return [];
   }
 
   const response = await fetch(`${normalizedBaseUrl}/models`, {
@@ -1525,13 +1508,13 @@ settingsRouter.post("/ai-providers/:provider/models", async (req, res) => {
     return res.status(400).json({
       ok: false,
       error: "Ajoute d'abord la cle API pour recuperer les modeles.",
-      models: fallbackModels[provider] ?? [configured.defaultModel]
+      models: []
     });
   }
 
   try {
     const models = await fetchModels(provider, apiKey, baseUrl);
-    const finalModels = models.length > 0 ? models : (fallbackModels[provider] ?? [configured.defaultModel]);
+    const finalModels = models;
     const existingOverride = storedAiProviderOverrides.find((item) => item.id === provider);
     const nextOverrides = storedAiProviderOverrides
       .filter((item) => item.id !== provider)
@@ -1540,7 +1523,9 @@ settingsRouter.post("/ai-providers/:provider/models", async (req, res) => {
         ...(typedApiKey ? { apiKey: typedApiKey } : existingOverride?.apiKey ? { apiKey: existingOverride.apiKey } : {}),
         baseUrl,
         models: finalModels,
-        defaultModel: finalModels.includes(configured.defaultModel) ? configured.defaultModel : finalModels[0]!,
+        defaultModel: finalModels.length > 0
+          ? (finalModels.includes(configured.defaultModel) ? configured.defaultModel : finalModels[0]!)
+          : configured.defaultModel,
         enabled: configured.enabled,
         budget: configured.budget
       });
@@ -1553,7 +1538,7 @@ settingsRouter.post("/ai-providers/:provider/models", async (req, res) => {
     res.status(502).json({
       ok: false,
       error: error instanceof Error ? error.message : "Impossible de recuperer les modeles.",
-      models: fallbackModels[provider] ?? [configured.defaultModel]
+      models: []
     });
   }
 });
@@ -1578,6 +1563,11 @@ settingsRouter.post("/ai-providers/:provider/test-chat", async (req, res) => {
     ? req.body.model.trim()
     : configured.defaultModel;
   const model = configured.models.includes(requestedModel) ? requestedModel : configured.defaultModel;
+  const requestedMessage = typeof req.body.message === "string" ? req.body.message.trim() : "";
+  const testMessage = requestedMessage || "Test de connexion chat. Reponds: test ok";
+  const systemPrompt = requestedMessage
+    ? "Tu es un assistant de test pour la configuration IA du produit sourcing. Reponds normalement, clairement et uniquement au message recu."
+    : "Reponds uniquement par: test ok";
 
   if (!apiKey) {
     return res.status(400).json({
@@ -1595,10 +1585,10 @@ settingsRouter.post("/ai-providers/:provider/test-chat", async (req, res) => {
         model
       },
       {
-        systemPrompt: "Reponds uniquement par: test ok",
-        messages: [{ role: "user", content: "Test de connexion chat. Reponds: test ok" }],
+        systemPrompt,
+        messages: [{ role: "user", content: testMessage }],
         temperature: 0,
-        maxTokens: 24
+        maxTokens: requestedMessage ? 220 : 24
       }
     );
 

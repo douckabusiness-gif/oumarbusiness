@@ -102,6 +102,8 @@ type ApiProviderConfig = {
   modelMessage?: string;
   chatStatus?: "idle" | "loading" | "ok" | "error";
   chatMessage?: string;
+  chatDraft?: string;
+  chatReply?: string;
 };
 
 type ApiSettingsTabKey = "providers" | "search";
@@ -120,7 +122,9 @@ function normalizeProvider(provider: ApiProviderConfig): ApiProviderConfig {
     modelStatus: "idle",
     modelMessage: undefined,
     chatStatus: "idle",
-    chatMessage: undefined
+    chatMessage: undefined,
+    chatDraft: "",
+    chatReply: ""
   };
 }
 
@@ -877,6 +881,54 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
     }
   }
 
+  async function testChat(provider: ApiProviderConfig) {
+    const draft = provider.chatDraft?.trim() ?? "";
+    if (!draft) {
+      updateProvider(provider.id, {
+        chatStatus: "error",
+        chatMessage: "Ecris un message de test avant d'envoyer."
+      });
+      return;
+    }
+
+    updateProvider(provider.id, {
+      chatStatus: "loading",
+      chatMessage: "Test du chat IA en cours..."
+    });
+
+    try {
+      const typedApiKey = provider.apiKey?.trim();
+      const response = await fetch(`${apiBaseUrl}/api/settings/ai-providers/${provider.id}/test-chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          ...(typedApiKey ? { apiKey: typedApiKey } : {}),
+          baseUrl: provider.baseUrl,
+          model: provider.defaultModel,
+          message: draft
+        })
+      });
+      const data = (await response.json()) as { ok?: boolean; replyPreview?: string; error?: string; message?: string };
+      if (!response.ok || !data.ok) throw new Error(data.error ?? "Chat indisponible");
+      updateProvider(provider.id, {
+        apiKey: "",
+        apiKeyConfigured: provider.apiKeyConfigured || Boolean(typedApiKey),
+        apiKeySource: typedApiKey ? "database" : provider.apiKeySource,
+        clearApiKey: false,
+        isReplacingKey: false,
+        chatStatus: "ok",
+        chatMessage: data.message ?? "Chat IA fonctionnel",
+        chatReply: data.replyPreview ?? ""
+      });
+    } catch (caught) {
+      updateProvider(provider.id, {
+        chatStatus: "error",
+        chatMessage: caught instanceof Error ? caught.message : "Chat indisponible"
+      });
+    }
+  }
+
   const providerItems = providers.filter(isChatProvider);
   const searchItems = providers.filter(isSearchProvider);
 
@@ -1097,7 +1149,66 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
                     {provider.models.length} modele(s) disponible(s)
                   </span>
                 ) : null}
+                {provider.chatMessage ? (
+                  <span
+                    className={`rounded-full border px-2 py-1 ${
+                      provider.chatStatus === "error"
+                        ? "border-rose-500/30 text-rose-300"
+                        : provider.chatStatus === "ok"
+                          ? "border-emerald-500/30 text-emerald-300"
+                          : "border-line text-zinc-400"
+                    }`}
+                  >
+                    {provider.chatMessage}
+                  </span>
+                ) : null}
               </div>
+
+              {!isSearch && (
+                <div className="mt-5 rounded-2xl border border-line bg-ink/60 p-4">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-zinc-100">Chat de test IA</p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        Envoie un vrai message pour verifier que la cle API et le fournisseur repondent correctement.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void testChat(provider)}
+                      disabled={provider.chatStatus === "loading"}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-gold px-4 text-sm font-semibold text-black disabled:opacity-60"
+                    >
+                      {provider.chatStatus === "loading" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                      Tester le chat
+                    </button>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_1fr]">
+                    <label className="grid gap-2 text-sm">
+                      <span className="text-zinc-300">Ton message</span>
+                      <textarea
+                        rows={5}
+                        value={provider.chatDraft ?? ""}
+                        onChange={(event) => updateProvider(provider.id, { chatDraft: event.target.value })}
+                        placeholder="Ex: Bonjour, presente-toi comme un assistant de sourcing et dis-moi comment tu peux m'aider."
+                        className="w-full resize-none rounded-2xl border border-line bg-panel px-3 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-gold/60"
+                      />
+                    </label>
+
+                    <div className="grid gap-2 text-sm">
+                      <span className="text-zinc-300">Reponse du fournisseur</span>
+                      <div className="min-h-[132px] rounded-2xl border border-line bg-panel px-3 py-3 text-sm text-zinc-200">
+                        {provider.chatReply?.trim() ? (
+                          <p className="whitespace-pre-wrap">{provider.chatReply}</p>
+                        ) : (
+                          <p className="text-zinc-600">Aucune reponse pour le moment. Lance un test pour voir le retour du modele.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </section>
           );
         })}
