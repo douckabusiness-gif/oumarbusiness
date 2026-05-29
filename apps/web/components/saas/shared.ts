@@ -168,6 +168,8 @@ export type SaasSourcingRun = {
     name: string;
     company: string;
     website: string;
+    email?: string;
+    phone?: string;
     snippet: string;
     summary: string;
     source: "serper" | "tavily";

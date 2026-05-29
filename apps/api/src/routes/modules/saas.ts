@@ -243,6 +243,8 @@ type SaasSourcingRun = {
     name: string;
     company: string;
     website: string;
+    email?: string;
+    phone?: string;
     snippet: string;
     summary: string;
     source: "serper" | "tavily";
@@ -769,6 +771,8 @@ function parseSourcingRun(value: unknown): SaasSourcingRun | null {
         const name = typeof item.name === "string" ? item.name : "";
         const company = typeof item.company === "string" ? item.company : "";
         const website = typeof item.website === "string" ? item.website : "";
+        const email = typeof item.email === "string" ? item.email : "";
+        const phone = typeof item.phone === "string" ? item.phone : "";
         const snippet = typeof item.snippet === "string" ? item.snippet : "";
         const summary = typeof item.summary === "string" ? item.summary : "";
         const source = item.source === "tavily" ? "tavily" : item.source === "serper" ? "serper" : null;
@@ -781,6 +785,8 @@ function parseSourcingRun(value: unknown): SaasSourcingRun | null {
           name,
           company,
           website,
+          ...(email ? { email } : {}),
+          ...(phone ? { phone } : {}),
           snippet,
           summary,
           source,
@@ -2358,6 +2364,41 @@ function dedupeSourcingProspects(prospects: NonNullable<SaasSourcingRun["prospec
     seen.add(key);
     return true;
   });
+}
+
+const sourcingEmailPattern = /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/g;
+const sourcingPhonePattern =
+  /(?:(?:\+|00)\d{1,4}[\s().-]*)?(?:\d[\s().-]*){7,16}\d/g;
+
+function extractFirstEmail(text: string) {
+  if (!text) return null;
+  const matches = text.match(sourcingEmailPattern) ?? [];
+  for (const match of matches) {
+    const email = match.trim().toLowerCase();
+    if (/@example\.com$/i.test(email)) continue;
+    if (/\.png$|\.jpg$|\.jpeg$|\.webp$|\.svg$/i.test(email)) continue;
+    return email;
+  }
+  return null;
+}
+
+function normalizeExtractedPhone(raw: string) {
+  const trimmed = raw.replace(/[^\d+]/g, "");
+  const digitCount = trimmed.replace(/\D/g, "").length;
+  if (digitCount < 8 || digitCount > 15) return null;
+  if (!/\d/.test(trimmed)) return null;
+  return raw.replace(/\s+/g, " ").trim();
+}
+
+function extractFirstPhone(text: string) {
+  if (!text) return null;
+  const matches = text.match(sourcingPhonePattern) ?? [];
+  for (const match of matches) {
+    const phone = normalizeExtractedPhone(match);
+    if (!phone) continue;
+    return phone;
+  }
+  return null;
 }
 
 function buildProspectScore(text: string, summary: string, website: string) {
@@ -4083,6 +4124,8 @@ saasRouter.get("/prospects", async (req, res, next) => {
           sector: run.sector || null,
           zone: run.zone || null,
           url: prospect.website || null,
+          email: prospect.email ?? null,
+          phone: prospect.phone ?? null,
           score: prospect.score ?? null,
           agentKey: run.agentKey,
           createdAt: run.createdAt,
@@ -5085,12 +5128,16 @@ async function executeUserSourcingRun(
       if (!matchesSectorIntent({ title: result.title, url: result.url, snippet: result.snippet, summary }, sector, brief)) return null;
       if (!looksLikeCompanyOfferPage({ title: result.title, url: result.url, snippet: result.snippet, summary }, sector, brief)) return null;
       if (!hasStrongBusinessSignals({ title: result.title, url: result.url, snippet: result.snippet, summary })) return null;
+      const email = extractFirstEmail(`${result.snippet}\n${summary}`);
+      const phone = extractFirstPhone(`${result.snippet}\n${summary}`);
 
       const prospect = {
         id: randomUUID(),
         name: extractProspectName(result.title, result.url),
         company: extractProspectName(result.title, result.url),
         website: result.url,
+        ...(email ? { email } : {}),
+        ...(phone ? { phone } : {}),
         snippet: result.snippet,
         summary: summary.slice(0, 4000),
         source: result.source,

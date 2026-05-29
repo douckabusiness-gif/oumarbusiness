@@ -13,6 +13,8 @@ type ProspectItem = {
   sector?: string | null;
   zone?: string | null;
   url?: string | null;
+  email?: string | null;
+  phone?: string | null;
   score?: number | null;
   agentKey?: string | null;
   createdAt?: string | null;
@@ -27,11 +29,11 @@ type ProspectPayload = {
 
 function agentName(agentKey?: string | null) {
   if (agentKey === "sourcing-serper") {
-    return "Serper";
+    return "Agent Découverte";
   }
 
   if (agentKey === "sourcing-tavily") {
-    return "Tavily";
+    return "Agent Qualification";
   }
 
   return "Sourcing";
@@ -174,6 +176,25 @@ export default function UserProspectsPage() {
                 <InfoCell label="Secteur" value={prospect.sector ?? "—"} />
               </div>
 
+              {prospect.email || prospect.phone ? (
+                <div className="mt-5 grid gap-3 text-sm text-zinc-400 md:grid-cols-2">
+                  {prospect.email ? (
+                    <InfoLinkCell
+                      label="Email"
+                      value={prospect.email}
+                      href={`mailto:${prospect.email}`}
+                    />
+                  ) : null}
+                  {prospect.phone ? (
+                    <InfoLinkCell
+                      label="Telephone"
+                      value={prospect.phone}
+                      href={`tel:${prospect.phone}`}
+                    />
+                  ) : null}
+                </div>
+              ) : null}
+
               {prospect.url ? (
                 <div className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-amber-300">
                   <a href={prospect.url} target="_blank" rel="noreferrer" className="break-all hover:text-amber-200">
@@ -224,6 +245,17 @@ function InfoCell({ label, value }: { label: string; value: string }) {
     <div>
       <div className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">{label}</div>
       <div className="mt-1 text-zinc-200">{value}</div>
+    </div>
+  );
+}
+
+function InfoLinkCell({ label, value, href }: { label: string; value: string; href: string }) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">{label}</div>
+      <a href={href} className="mt-1 block break-all text-amber-300 hover:text-amber-200">
+        {value}
+      </a>
     </div>
   );
 }
