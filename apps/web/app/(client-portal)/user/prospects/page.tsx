@@ -27,6 +27,31 @@ type ProspectPayload = {
   items?: ProspectItem[];
 };
 
+const freeEmailDomains = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "yahoo.fr",
+  "hotmail.com",
+  "hotmail.fr",
+  "outlook.com",
+  "outlook.fr",
+  "live.com",
+  "live.fr",
+  "icloud.com",
+  "aol.com",
+  "gmx.com",
+  "gmx.fr",
+  "yandex.com",
+  "proton.me",
+  "protonmail.com",
+  "orange.fr",
+  "wanadoo.fr",
+  "free.fr",
+  "laposte.net",
+  "sfr.fr",
+]);
+
 function agentName(agentKey?: string | null) {
   if (agentKey === "sourcing-serper") {
     return "Agent Découverte";
@@ -54,6 +79,74 @@ function formatDate(value?: string | null) {
     month: "short",
     year: "numeric",
   }).format(date);
+}
+
+function normalizeDomain(value: string) {
+  return value.trim().toLowerCase().replace(/^www\./, "");
+}
+
+function extractWebsiteHostname(url?: string | null) {
+  if (!url) {
+    return "";
+  }
+
+  try {
+    return normalizeDomain(new URL(url).hostname);
+  } catch {
+    return "";
+  }
+}
+
+function emailLooksStrong(email?: string | null, url?: string | null) {
+  if (!email) {
+    return false;
+  }
+
+  const normalized = email.trim().toLowerCase();
+  const [localPart = "", domain = ""] = normalized.split("@");
+  const emailDomain = normalizeDomain(domain);
+  const hostname = extractWebsiteHostname(url);
+
+  if (!emailDomain || !hostname) {
+    return false;
+  }
+
+  const matchesSite =
+    emailDomain === hostname ||
+    emailDomain.endsWith(`.${hostname}`) ||
+    hostname.endsWith(`.${emailDomain}`);
+
+  if (!matchesSite) {
+    return false;
+  }
+
+  if (freeEmailDomains.has(emailDomain)) {
+    return false;
+  }
+
+  if (/^(no-?reply|noreply|do-?not-?reply)([._-].*)?$/i.test(localPart)) {
+    return false;
+  }
+
+  return true;
+}
+
+function emailBadge(email?: string | null, url?: string | null) {
+  if (!email) {
+    return null;
+  }
+
+  if (emailLooksStrong(email, url)) {
+    return {
+      label: "Email entreprise fort",
+      className: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+    };
+  }
+
+  return {
+    label: "Email a verifier",
+    className: "border-amber-500/30 bg-amber-500/10 text-amber-200",
+  };
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -150,80 +243,87 @@ export default function UserProspectsPage() {
             />
           </div>
         ) : (
-          prospects.map((prospect) => (
-            <article
-              key={prospect.id}
-              className="rounded-[28px] border border-zinc-800 bg-zinc-950/70 p-5"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <h2 className="truncate text-2xl font-semibold text-white">
-                    {prospect.name || prospect.title || "Prospect"}
-                  </h2>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Badge>{agentName(prospect.agentKey)}</Badge>
-                    {prospect.sessionId ? <Badge>Session {prospect.sessionId.slice(0, 8)}</Badge> : null}
-                    {prospect.cycleIndex != null ? <Badge>Cycle {prospect.cycleIndex}</Badge> : null}
+          prospects.map((prospect) => {
+            const mailBadge = emailBadge(prospect.email, prospect.url);
+
+            return (
+              <article
+                key={prospect.id}
+                className="rounded-[28px] border border-zinc-800 bg-zinc-950/70 p-5"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <h2 className="truncate text-2xl font-semibold text-white">
+                      {prospect.name || prospect.title || "Prospect"}
+                    </h2>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Badge>{agentName(prospect.agentKey)}</Badge>
+                      {prospect.sessionId ? <Badge>Session {prospect.sessionId.slice(0, 8)}</Badge> : null}
+                      {prospect.cycleIndex != null ? <Badge>Cycle {prospect.cycleIndex}</Badge> : null}
+                      {mailBadge ? (
+                        <Badge className={mailBadge.className}>{mailBadge.label}</Badge>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-200">
+                    {typeof prospect.score === "number" ? `${prospect.score}/10` : "—"}
                   </div>
                 </div>
-                <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-200">
-                  {typeof prospect.score === "number" ? `${prospect.score}/10` : "—"}
-                </div>
-              </div>
 
-              <div className="mt-5 grid gap-3 text-sm text-zinc-400 md:grid-cols-2">
-                <InfoCell label="Zone" value={prospect.zone ?? "—"} />
-                <InfoCell label="Secteur" value={prospect.sector ?? "—"} />
-              </div>
-
-              {prospect.email || prospect.phone ? (
                 <div className="mt-5 grid gap-3 text-sm text-zinc-400 md:grid-cols-2">
-                  {prospect.email ? (
-                    <InfoLinkCell
-                      label="Email"
-                      value={prospect.email}
-                      href={`mailto:${prospect.email}`}
-                    />
-                  ) : null}
-                  {prospect.phone ? (
-                    <InfoLinkCell
-                      label="Telephone"
-                      value={prospect.phone}
-                      href={`tel:${prospect.phone}`}
-                    />
-                  ) : null}
+                  <InfoCell label="Zone" value={prospect.zone ?? "—"} />
+                  <InfoCell label="Secteur" value={prospect.sector ?? "—"} />
                 </div>
-              ) : null}
 
-              {prospect.url ? (
-                <div className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-amber-300">
-                  <a href={prospect.url} target="_blank" rel="noreferrer" className="break-all hover:text-amber-200">
-                    {prospect.url}
-                  </a>
-                </div>
-              ) : null}
+                {prospect.email || prospect.phone ? (
+                  <div className="mt-5 grid gap-3 text-sm text-zinc-400 md:grid-cols-2">
+                    {prospect.email ? (
+                      <InfoLinkCell
+                        label="Email"
+                        value={prospect.email}
+                        href={`mailto:${prospect.email}`}
+                      />
+                    ) : null}
+                    {prospect.phone ? (
+                      <InfoLinkCell
+                        label="Telephone"
+                        value={prospect.phone}
+                        href={`tel:${prospect.phone}`}
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
 
-              {prospect.summary ? (
-                <p className="mt-5 line-clamp-4 text-sm leading-7 text-zinc-300">{prospect.summary}</p>
-              ) : null}
-
-              <div className="mt-5 flex items-center justify-between gap-3 text-sm text-zinc-500">
-                <span>{formatDate(prospect.createdAt)}</span>
-                <div className="flex gap-2">
-                  {prospect.url ? (
-                    <a
-                      href={prospect.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center justify-center rounded-2xl border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:border-zinc-500"
-                    >
-                      Ouvrir
+                {prospect.url ? (
+                  <div className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-amber-300">
+                    <a href={prospect.url} target="_blank" rel="noreferrer" className="break-all hover:text-amber-200">
+                      {prospect.url}
                     </a>
-                  ) : null}
+                  </div>
+                ) : null}
+
+                {prospect.summary ? (
+                  <p className="mt-5 line-clamp-4 text-sm leading-7 text-zinc-300">{prospect.summary}</p>
+                ) : null}
+
+                <div className="mt-5 flex items-center justify-between gap-3 text-sm text-zinc-500">
+                  <span>{formatDate(prospect.createdAt)}</span>
+                  <div className="flex gap-2">
+                    {prospect.url ? (
+                      <a
+                        href={prospect.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center justify-center rounded-2xl border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:border-zinc-500"
+                      >
+                        Ouvrir
+                      </a>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            </article>
-          ))
+              </article>
+            );
+          })
         )}
       </section>
       </div>
@@ -260,9 +360,11 @@ function InfoLinkCell({ label, value, href }: { label: string; value: string; hr
   );
 }
 
-function Badge({ children }: { children: ReactNode }) {
+function Badge({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-300">
+    <span
+      className={`inline-flex items-center rounded-full border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-300 ${className}`.trim()}
+    >
       {children}
     </span>
   );
