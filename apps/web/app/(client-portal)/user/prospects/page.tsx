@@ -173,6 +173,7 @@ export default function UserProspectsPage() {
   const [prospects, setProspects] = useState<ProspectItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -191,6 +192,49 @@ export default function UserProspectsPage() {
     const timer = window.setInterval(() => void load(), 10000);
     return () => window.clearInterval(timer);
   }, [load]);
+
+  const handleDeleteProspect = useCallback(
+    async (prospect: ProspectItem) => {
+      if (!prospect.runId) {
+        setError("Ce prospect ne peut pas etre supprime pour le moment.");
+        return;
+      }
+
+      const confirmed = window.confirm(
+        "Supprimer ce prospect de ta liste ? Cette action n'efface pas tout le sourcing, seulement ce contact.",
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      setDeletingId(prospect.id);
+      try {
+        const response = await fetch(
+          `/api/sourcing/prospects/${prospect.id}?runId=${encodeURIComponent(prospect.runId)}`,
+          {
+            method: "DELETE",
+            credentials: "include",
+          },
+        );
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          const message =
+            payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+              ? payload.error
+              : "Impossible de supprimer ce prospect.";
+          throw new Error(message);
+        }
+
+        setProspects((current) => current.filter((item) => !(item.id === prospect.id && item.runId === prospect.runId)));
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Impossible de supprimer ce prospect.");
+      } finally {
+        setDeletingId(null);
+      }
+    },
+    [],
+  );
 
   const stats = useMemo(() => {
     const serper = prospects.filter((item) => item.agentKey === "sourcing-serper").length;
@@ -310,6 +354,14 @@ export default function UserProspectsPage() {
                 <div className="mt-5 flex items-center justify-between gap-3 text-sm text-zinc-500">
                   <span>{formatDate(prospect.createdAt)}</span>
                   <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteProspect(prospect)}
+                      disabled={deletingId === prospect.id}
+                      className="inline-flex items-center justify-center rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-200 transition hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {deletingId === prospect.id ? "Suppression..." : "Supprimer"}
+                    </button>
                     {prospect.runId ? (
                       <Link
                         href={`/user/history/run?id=${prospect.runId}`}

@@ -107,6 +107,7 @@ export default function UserHistoryPage() {
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -141,6 +142,39 @@ export default function UserHistoryPage() {
     const timer = window.setInterval(() => void load(), 10000);
     return () => window.clearInterval(timer);
   }, [load]);
+
+  const handleDeleteRun = useCallback(async (run: HistoryRun) => {
+    const confirmed = window.confirm(
+      "Retirer ce sourcing de l'historique ? Les prospects deja retenus resteront disponibles dans Mes prospects.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingRunId(run.id);
+    try {
+      const response = await fetch(`/api/sourcing/history/${run.id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message =
+          payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+            ? payload.error
+            : "Impossible de supprimer ce sourcing de l'historique.";
+        throw new Error(message);
+      }
+
+      setRuns((current) => current.filter((item) => item.id !== run.id));
+      setEvents((current) => current.filter((item) => item.runId !== run.id));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Impossible de supprimer ce sourcing de l'historique.");
+    } finally {
+      setDeletingRunId(null);
+    }
+  }, []);
 
   const groupedRuns = useMemo(() => {
     const map = new Map<string, HistoryRun[]>();
@@ -223,10 +257,9 @@ export default function UserHistoryPage() {
 
                   <div className="mt-5 space-y-3">
                     {sessionRuns.map((run) => (
-                      <Link
+                      <div
                         key={run.id}
-                        href={`/user/history/run?id=${run.id}`}
-                        className="block rounded-2xl border border-zinc-800 bg-black/30 px-4 py-4 transition hover:border-amber-400/40 hover:bg-zinc-900/80"
+                        className="rounded-2xl border border-zinc-800 bg-black/30 px-4 py-4"
                       >
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                           <div>
@@ -251,8 +284,23 @@ export default function UserHistoryPage() {
                           <InfoCell label="Retenus" value={String(run.keptCount ?? 0)} />
                           <InfoCell label="Lance le" value={formatDateTime(run.createdAt)} />
                         </div>
-                        <div className="mt-4 text-sm font-medium text-amber-300">Voir l'analyse complete</div>
-                      </Link>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <Link
+                            href={`/user/history/run?id=${run.id}`}
+                            className="inline-flex items-center justify-center rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm font-medium text-amber-200 transition hover:bg-amber-400/15"
+                          >
+                            Voir l'analyse complete
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteRun(run)}
+                            disabled={deletingRunId === run.id}
+                            className="inline-flex items-center justify-center rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-200 transition hover:bg-rose-500/15 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {deletingRunId === run.id ? "Suppression..." : "Supprimer"}
+                          </button>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </div>

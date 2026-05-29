@@ -253,6 +253,7 @@ type SaasSourcingRun = {
     crmLeadId?: string;
   }>;
   error?: string;
+  deletedFromHistoryAt?: string;
   createdAt: string;
 };
 
@@ -799,6 +800,8 @@ function parseSourcingRun(value: unknown): SaasSourcingRun | null {
       }, [])
     : [];
   const error = typeof value.error === "string" ? value.error : undefined;
+  const deletedFromHistoryAt =
+    typeof value.deletedFromHistoryAt === "string" ? value.deletedFromHistoryAt : undefined;
   const createdAt = typeof value.createdAt === "string" ? value.createdAt : "";
   if (
     !id ||
@@ -831,6 +834,7 @@ function parseSourcingRun(value: unknown): SaasSourcingRun | null {
     providers,
     prospects,
     error,
+    ...(deletedFromHistoryAt ? { deletedFromHistoryAt } : {}),
     createdAt
   };
 }
@@ -3145,6 +3149,10 @@ function toPublicSourcingRun(run: SaasSourcingRun) {
   };
 }
 
+function isSourcingRunVisibleInHistory(run: SaasSourcingRun) {
+  return !run.deletedFromHistoryAt;
+}
+
 function toPublicSourcingSession(session: SaasSourcingSession) {
   return {
     id: session.id,
@@ -4297,6 +4305,53 @@ saasRouter.get("/prospects", async (req, res, next) => {
   }
 });
 
+saasRouter.delete("/prospects/:prospectId", async (req, res, next) => {
+  try {
+    const context = await resolveAuthenticatedContext(req);
+    if (!context) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session utilisateur invalide." });
+    }
+
+    const prospectId = String(req.params.prospectId ?? "");
+    const runId = typeof req.query.runId === "string" ? req.query.runId.trim() : "";
+    if (!prospectId || !runId) {
+      return res.status(400).json({ error: "Prospect ou run invalide." });
+    }
+
+    const runs = await loadSourcingRuns();
+    const run = runs.find(
+      (item) =>
+        item.id === runId &&
+        item.companyId === context.company.id &&
+        item.moduleKey === "sourcing-commercial",
+    );
+    if (!run) {
+      return res.status(404).json({ error: "Run sourcing introuvable." });
+    }
+
+    const nextProspects = run.prospects.filter((item) => item.id !== prospectId);
+    if (nextProspects.length === run.prospects.length) {
+      return res.status(404).json({ error: "Prospect introuvable." });
+    }
+
+    const nextRuns = runs.map((item) =>
+      item.id === run.id
+        ? {
+            ...item,
+            prospects: nextProspects,
+            foundCount: nextProspects.length,
+          }
+        : item,
+    );
+    await saveSourcingRuns(nextRuns);
+
+    return res.json({ ok: true, runId, prospectId });
+  } catch (error) {
+    next(error);
+  }
+});
+
 saasRouter.get("/history", async (req, res, next) => {
   try {
     const context = await resolveAuthenticatedContext(req);
@@ -4308,6 +4363,7 @@ saasRouter.get("/history", async (req, res, next) => {
     const runtime = await getCompanyRuntime(context.company);
     const runs = runtime.runs
       .filter((run) => run.moduleKey === "sourcing-commercial")
+      .filter(isSourcingRunVisibleInHistory)
       .slice()
       .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
       .map((run) => ({
@@ -4376,6 +4432,46 @@ saasRouter.get("/history/:runId", async (req, res, next) => {
       sessionRuns,
       events
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.delete("/history/:runId", async (req, res, next) => {
+  try {
+    const context = await resolveAuthenticatedContext(req);
+    if (!context) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session utilisateur invalide." });
+    }
+
+    const runId = String(req.params.runId ?? "");
+    if (!runId) {
+      return res.status(400).json({ error: "Run sourcing invalide." });
+    }
+
+    const [runs, events] = await Promise.all([loadSourcingRuns(), loadSourcingLiveEvents()]);
+    const run = runs.find(
+      (item) =>
+        item.id === runId &&
+        item.companyId === context.company.id &&
+        item.moduleKey === "sourcing-commercial",
+    );
+    if (!run) {
+      return res.status(404).json({ error: "Run sourcing introuvable." });
+    }
+
+    const deletedFromHistoryAt = new Date().toISOString();
+    const nextRuns = runs.map((item) =>
+      item.id === run.id ? { ...item, deletedFromHistoryAt } : item,
+    );
+    const nextEvents = events.filter(
+      (event) => !(event.companyId === context.company.id && event.runId === run.id),
+    );
+
+    await Promise.all([saveSourcingRuns(nextRuns), saveSourcingLiveEvents(nextEvents)]);
+
+    return res.json({ ok: true, runId, deletedFromHistoryAt });
   } catch (error) {
     next(error);
   }
