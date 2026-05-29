@@ -2369,6 +2369,8 @@ function dedupeSourcingProspects(prospects: NonNullable<SaasSourcingRun["prospec
 const sourcingEmailPattern = /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/g;
 const sourcingPhonePattern =
   /(?:(?:\+|00)\d{1,4}[\s().-]*)?(?:\d[\s().-]*){7,16}\d/g;
+const sourcingContactTextPattern = /\b(contact|contactez|nous contacter|contact us|joindre|email|e-mail|telephone|tel|phone|whatsapp)\b/i;
+const sourcingContactPathPattern = /(contact|contact-us|nous-contacter|nous-joindre|reach-us)/i;
 
 function extractFirstEmail(text: string) {
   if (!text) return null;
@@ -2399,6 +2401,56 @@ function extractFirstPhone(text: string) {
     return phone;
   }
   return null;
+}
+
+function hasStrongContactSignals({
+  url,
+  snippet,
+  summary,
+  email,
+  phone
+}: {
+  url: string;
+  snippet: string;
+  summary: string;
+  email?: string | null;
+  phone?: string | null;
+}) {
+  if (email || phone) return true;
+  const text = `${snippet}\n${summary}`;
+  const textSignal = sourcingContactTextPattern.test(text);
+  try {
+    const parsed = new URL(url);
+    return textSignal && sourcingContactPathPattern.test(parsed.pathname);
+  } catch {
+    return textSignal;
+  }
+}
+
+function buildContactSignalBoost({
+  url,
+  snippet,
+  summary,
+  email,
+  phone
+}: {
+  url: string;
+  snippet: string;
+  summary: string;
+  email?: string | null;
+  phone?: string | null;
+}) {
+  let score = 0;
+  if (email) score += 18;
+  if (phone) score += 16;
+  if (sourcingContactTextPattern.test(`${snippet}\n${summary}`)) score += 8;
+  try {
+    const parsed = new URL(url);
+    if (sourcingContactPathPattern.test(parsed.pathname)) score += 6;
+  } catch {
+    // ignore URL parse failures here; base scoring already handles bad URLs
+  }
+  return score;
 }
 
 function buildProspectScore(text: string, summary: string, website: string) {
@@ -5130,6 +5182,30 @@ async function executeUserSourcingRun(
       if (!hasStrongBusinessSignals({ title: result.title, url: result.url, snippet: result.snippet, summary })) return null;
       const email = extractFirstEmail(`${result.snippet}\n${summary}`);
       const phone = extractFirstPhone(`${result.snippet}\n${summary}`);
+      const contactStrong = hasStrongContactSignals({
+        url: result.url,
+        snippet: result.snippet,
+        summary,
+        email,
+        phone
+      });
+      const score = Math.min(
+        99,
+        buildProspectScore(combinedText, summary, result.url) +
+          buildMissionKeywordBoost(combinedText, sourcingAgent.missionConfig) +
+          buildContactSignalBoost({
+            url: result.url,
+            snippet: result.snippet,
+            summary,
+            email,
+            phone
+          })
+      );
+
+      if (sourcingAgent.missionConfig.source === "tavily") {
+        if (!contactStrong) return null;
+        if (score < 60) return null;
+      }
 
       const prospect = {
         id: randomUUID(),
@@ -5141,7 +5217,7 @@ async function executeUserSourcingRun(
         snippet: result.snippet,
         summary: summary.slice(0, 4000),
         source: result.source,
-        score: Math.min(99, buildProspectScore(combinedText, summary, result.url) + buildMissionKeywordBoost(combinedText, sourcingAgent.missionConfig))
+        score
       };
 
       const dedupeKey = buildProspectDedupKey(prospect);
