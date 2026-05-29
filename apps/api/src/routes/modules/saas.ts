@@ -2371,15 +2371,99 @@ const sourcingPhonePattern =
   /(?:(?:\+|00)\d{1,4}[\s().-]*)?(?:\d[\s().-]*){7,16}\d/g;
 const sourcingContactTextPattern = /\b(contact|contactez|nous contacter|contact us|joindre|email|e-mail|telephone|tel|phone|whatsapp)\b/i;
 const sourcingContactPathPattern = /(contact|contact-us|nous-contacter|nous-joindre|reach-us)/i;
+const sourcingFreeEmailDomains = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "yahoo.fr",
+  "hotmail.com",
+  "hotmail.fr",
+  "outlook.com",
+  "outlook.fr",
+  "live.com",
+  "live.fr",
+  "icloud.com",
+  "aol.com",
+  "gmx.com",
+  "gmx.fr",
+  "yandex.com",
+  "proton.me",
+  "protonmail.com",
+  "orange.fr",
+  "wanadoo.fr",
+  "free.fr",
+  "laposte.net",
+  "sfr.fr"
+]);
+const sourcingBusinessLocalPartPattern = /^(contact|info|hello|bonjour|commercial|sales|support|office|team|service|secretariat|accueil|direction|contacto|admin|partnership|partenariat|client|clients?)([._-].*)?$/i;
+const sourcingNoReplyLocalPartPattern = /^(no-?reply|noreply|do-?not-?reply)([._-].*)?$/i;
 
-function extractFirstEmail(text: string) {
+function normalizeEmailDomain(value: string) {
+  return value.trim().toLowerCase().replace(/^www\./, "");
+}
+
+function getWebsiteHostname(url: string) {
+  try {
+    return normalizeEmailDomain(new URL(url).hostname);
+  } catch {
+    return "";
+  }
+}
+
+function emailMatchesWebsiteDomain(emailDomain: string, websiteHostname: string) {
+  if (!emailDomain || !websiteHostname) return false;
+  return (
+    emailDomain === websiteHostname ||
+    emailDomain.endsWith(`.${websiteHostname}`) ||
+    websiteHostname.endsWith(`.${emailDomain}`)
+  );
+}
+
+function scoreExtractedEmailCandidate(email: string, url: string) {
+  const normalized = email.trim().toLowerCase();
+  const [localPart = "", rawDomain = ""] = normalized.split("@");
+  const emailDomain = normalizeEmailDomain(rawDomain);
+  const websiteHostname = getWebsiteHostname(url);
+
+  let score = 0;
+  if (!emailDomain) return score;
+  if (emailMatchesWebsiteDomain(emailDomain, websiteHostname)) score += 26;
+  if (!sourcingFreeEmailDomains.has(emailDomain)) score += 14;
+  if (sourcingBusinessLocalPartPattern.test(localPart)) score += 8;
+  if (sourcingNoReplyLocalPartPattern.test(localPart)) score -= 14;
+  if (sourcingFreeEmailDomains.has(emailDomain)) score -= 10;
+
+  return score;
+}
+
+function hasHighValueBusinessEmail(email: string | null | undefined, url: string) {
+  if (!email) return false;
+  return scoreExtractedEmailCandidate(email, url) >= 18;
+}
+
+function extractPreferredEmail(text: string, url: string) {
   if (!text) return null;
   const matches = text.match(sourcingEmailPattern) ?? [];
-  for (const match of matches) {
-    const email = match.trim().toLowerCase();
-    if (/@example\.com$/i.test(email)) continue;
-    if (/\.png$|\.jpg$|\.jpeg$|\.webp$|\.svg$/i.test(email)) continue;
-    return email;
+  const candidates = Array.from(
+    new Set(
+      matches
+        .map((match) => match.trim().toLowerCase())
+        .filter((email) => !/@example\.com$/i.test(email))
+        .filter((email) => !/\.png$|\.jpg$|\.jpeg$|\.webp$|\.svg$/i.test(email))
+    )
+  );
+
+  if (!candidates.length) return null;
+
+  candidates.sort((left, right) => {
+    const scoreDiff = scoreExtractedEmailCandidate(right, url) - scoreExtractedEmailCandidate(left, url);
+    if (scoreDiff !== 0) return scoreDiff;
+    return left.localeCompare(right);
+  });
+
+  for (const candidate of candidates) {
+    if (sourcingNoReplyLocalPartPattern.test(candidate.split("@")[0] ?? "")) continue;
+    return candidate;
   }
   return null;
 }
@@ -2416,7 +2500,7 @@ function hasStrongContactSignals({
   email?: string | null;
   phone?: string | null;
 }) {
-  if (email || phone) return true;
+  if (phone || hasHighValueBusinessEmail(email, url)) return true;
   const text = `${snippet}\n${summary}`;
   const textSignal = sourcingContactTextPattern.test(text);
   try {
@@ -2441,7 +2525,10 @@ function buildContactSignalBoost({
   phone?: string | null;
 }) {
   let score = 0;
-  if (email) score += 18;
+  if (email) {
+    const emailScore = scoreExtractedEmailCandidate(email, url);
+    score += Math.max(6, Math.min(26, emailScore));
+  }
   if (phone) score += 16;
   if (sourcingContactTextPattern.test(`${snippet}\n${summary}`)) score += 8;
   try {
@@ -5180,7 +5267,7 @@ async function executeUserSourcingRun(
       if (!matchesSectorIntent({ title: result.title, url: result.url, snippet: result.snippet, summary }, sector, brief)) return null;
       if (!looksLikeCompanyOfferPage({ title: result.title, url: result.url, snippet: result.snippet, summary }, sector, brief)) return null;
       if (!hasStrongBusinessSignals({ title: result.title, url: result.url, snippet: result.snippet, summary })) return null;
-      const email = extractFirstEmail(`${result.snippet}\n${summary}`);
+      const email = extractPreferredEmail(`${result.snippet}\n${summary}`, result.url);
       const phone = extractFirstPhone(`${result.snippet}\n${summary}`);
       const contactStrong = hasStrongContactSignals({
         url: result.url,
