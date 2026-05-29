@@ -1078,6 +1078,15 @@ function agentLabel(agentKey: string) {
   return "Agent sourcing";
 }
 
+function normalizeSourcingUserText(value: string | null | undefined) {
+  if (!value) return "";
+  return value
+    .replace(/Agent Serper/gi, "Agent Découverte")
+    .replace(/Agent Tavily/gi, "Agent Qualification")
+    .replace(/\bSerper\b/gi, "Agent Découverte")
+    .replace(/\bTavily\b/gi, "Agent Qualification");
+}
+
 function addDays(source: string | Date, days: number) {
   const next = new Date(source);
   next.setDate(next.getDate() + days);
@@ -3125,7 +3134,15 @@ function toPublicLead(lead: SaasCrmLead) {
 }
 
 function toPublicSourcingRun(run: SaasSourcingRun) {
-  return run;
+  return {
+    ...run,
+    error: run.error ? normalizeSourcingUserText(run.error) : run.error,
+    prospects: run.prospects.map((prospect) => ({
+      ...prospect,
+      summary: normalizeSourcingUserText(prospect.summary),
+      snippet: normalizeSourcingUserText(prospect.snippet)
+    }))
+  };
 }
 
 function toPublicSourcingSession(session: SaasSourcingSession) {
@@ -3154,10 +3171,10 @@ function toPublicSourcingLiveEvent(event: SaasSourcingLiveEvent) {
     sessionId: event.sessionId,
     companyId: event.companyId,
     agentKey: event.agentKey ?? null,
-    agentName: event.agentName ?? null,
+    agentName: event.agentKey ? agentLabel(event.agentKey) : event.agentName ? normalizeSourcingUserText(event.agentName) : null,
     type: event.type,
     level: event.level,
-    message: event.message,
+    message: normalizeSourcingUserText(event.message),
     runId: event.runId ?? null,
     prospectCount: event.prospectCount ?? null,
     createdAt: event.createdAt
@@ -4259,7 +4276,7 @@ saasRouter.get("/prospects", async (req, res, next) => {
           id: prospect.id,
           name: prospect.company || prospect.name || "Prospect",
           title: prospect.name || prospect.company || "Prospect",
-          summary: prospect.summary || prospect.snippet || "",
+          summary: normalizeSourcingUserText(prospect.summary || prospect.snippet || ""),
           sector: run.sector || null,
           zone: run.zone || null,
           url: prospect.website || null,
@@ -4267,6 +4284,7 @@ saasRouter.get("/prospects", async (req, res, next) => {
           phone: prospect.phone ?? null,
           score: prospect.score ?? null,
           agentKey: run.agentKey,
+          runId: run.id,
           createdAt: run.createdAt,
           sessionId: run.sessionId ?? null,
           cycleIndex: run.cycleIndex ?? null
@@ -4296,7 +4314,7 @@ saasRouter.get("/history", async (req, res, next) => {
         id: run.id,
         agentKey: run.agentKey,
         status: run.status,
-        keywords: run.brief,
+        keywords: normalizeSourcingUserText(run.brief),
         sector: run.sector || null,
         zone: run.zone || null,
         keptCount: run.foundCount,
@@ -4306,6 +4324,58 @@ saasRouter.get("/history", async (req, res, next) => {
       }));
 
     return res.json({ runs });
+  } catch (error) {
+    next(error);
+  }
+});
+
+saasRouter.get("/history/:runId", async (req, res, next) => {
+  try {
+    const context = await resolveAuthenticatedContext(req);
+    if (!context) {
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session utilisateur invalide." });
+    }
+
+    const runId = String(req.params.runId ?? "");
+    const runtime = await getCompanyRuntime(context.company);
+    const run = runtime.runs.find((item) => item.moduleKey === "sourcing-commercial" && item.id === runId);
+    if (!run) {
+      return res.status(404).json({ error: "Run sourcing introuvable." });
+    }
+
+    const sessionRuns = runtime.runs
+      .filter((item) => item.moduleKey === "sourcing-commercial")
+      .filter((item) => (run.sessionId ? item.sessionId === run.sessionId : item.id === run.id))
+      .slice()
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .map((item) => ({
+        id: item.id,
+        agentKey: item.agentKey,
+        agentName: agentLabel(item.agentKey),
+        status: item.status,
+        keywords: normalizeSourcingUserText(item.brief),
+        sector: item.sector || null,
+        zone: item.zone || null,
+        keptCount: item.foundCount,
+        createdAt: item.createdAt,
+        sessionId: item.sessionId ?? null,
+        cycleIndex: item.cycleIndex ?? null
+      }));
+
+    const events = runtime.liveEvents
+      .filter((event) => event.companyId === context.company.id)
+      .filter((event) => event.runId === run.id || (run.sessionId ? event.sessionId === run.sessionId : false))
+      .slice()
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .map(toPublicSourcingLiveEvent);
+
+    return res.json({
+      run: toPublicSourcingRun(run),
+      agentName: agentLabel(run.agentKey),
+      sessionRuns,
+      events
+    });
   } catch (error) {
     next(error);
   }

@@ -25,6 +25,7 @@ type LiveEvent = {
   message: string;
   createdAt: string;
   sessionId: string;
+  runId?: string | null;
   cycleIndex?: number | null;
 };
 
@@ -38,11 +39,11 @@ type HistoryPayload = {
 
 function agentName(agentKey?: string | null) {
   if (agentKey === "sourcing-serper") {
-    return "Agent Serper";
+    return "Agent Découverte";
   }
 
   if (agentKey === "sourcing-tavily") {
-    return "Agent Tavily";
+    return "Agent Qualification";
   }
 
   return "Agent sourcing";
@@ -222,9 +223,10 @@ export default function UserHistoryPage() {
 
                   <div className="mt-5 space-y-3">
                     {sessionRuns.map((run) => (
-                      <div
+                      <Link
                         key={run.id}
-                        className="rounded-2xl border border-zinc-800 bg-black/30 px-4 py-4"
+                        href={`/user/history/run?id=${run.id}`}
+                        className="block rounded-2xl border border-zinc-800 bg-black/30 px-4 py-4 transition hover:border-amber-400/40 hover:bg-zinc-900/80"
                       >
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                           <div>
@@ -249,7 +251,8 @@ export default function UserHistoryPage() {
                           <InfoCell label="Retenus" value={String(run.keptCount ?? 0)} />
                           <InfoCell label="Lance le" value={formatDateTime(run.createdAt)} />
                         </div>
-                      </div>
+                        <div className="mt-4 text-sm font-medium text-amber-300">Voir l'analyse complete</div>
+                      </Link>
                     ))}
                   </div>
                 </div>
@@ -291,6 +294,13 @@ export default function UserHistoryPage() {
                     </div>
                   </div>
                   <div className="mt-3 text-xs text-zinc-500">{formatDateTime(event.createdAt)}</div>
+                  {event.runId ? (
+                    <div className="mt-3">
+                      <Link href={`/user/history/run?id=${event.runId}`} className="text-sm font-medium text-amber-300 hover:text-amber-200">
+                        Ouvrir l'analyse
+                      </Link>
+                    </div>
+                  ) : null}
                 </div>
               ))
             )}
