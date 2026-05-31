@@ -86,6 +86,7 @@ type ApiProviderConfig = {
   id: string;
   name: string;
   baseUrl: string;
+  defaultModel: string;
   enabled: boolean;
   budget: string;
   models: string[];
@@ -131,6 +132,7 @@ function toProviderPayload(provider: ApiProviderConfig) {
   return {
     id: provider.id,
     baseUrl: provider.baseUrl,
+    defaultModel: provider.defaultModel,
     enabled: provider.enabled,
     budget: provider.budget,
     models: provider.models,
@@ -835,6 +837,8 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
       const models = data.models ?? [];
       updateProvider(provider.id, {
         models,
+        defaultModel:
+          provider.defaultModel && models.includes(provider.defaultModel) ? provider.defaultModel : "",
         apiKey: "",
         apiKeyConfigured: provider.apiKeyConfigured || Boolean(typedApiKey),
         apiKeySource: typedApiKey ? "database" : provider.apiKeySource,
@@ -892,6 +896,9 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
 
     try {
       const typedApiKey = provider.apiKey?.trim();
+      if (!provider.defaultModel) {
+        throw new Error("Choisis d'abord un modele par defaut apres avoir recupere les modeles.");
+      }
       const response = await fetch(`${apiBaseUrl}/api/settings/ai-providers/${provider.id}/test-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1133,6 +1140,29 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
                   </span>
                 ) : null}
               </div>
+
+              {!isSearch && provider.models?.length > 0 && (
+                <div className="mt-4">
+                  <label className="grid gap-2 text-sm">
+                    <span className="text-zinc-300">Modele par defaut</span>
+                    <select
+                      value={provider.defaultModel}
+                      onChange={(event) => updateProvider(provider.id, { defaultModel: event.target.value })}
+                      className="h-11 max-w-md rounded-xl border border-line bg-ink px-3 text-sm text-zinc-100 outline-none focus:border-gold/60"
+                    >
+                      <option value="">Choisir un modele</option>
+                      {provider.models.map((model) => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="mt-1.5 text-xs text-zinc-600">
+                    Ce modele n'est jamais impose par le systeme. Il sera utilise seulement si tu le choisis ici apres recuperation depuis ta cle API.
+                  </p>
+                </div>
+              )}
 
               {!isSearch && (
                 <div className="mt-5 rounded-2xl border border-line bg-ink/60 p-4">

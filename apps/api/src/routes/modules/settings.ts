@@ -283,14 +283,14 @@ const aiProviders = [
     id: "tavily",
     name: "Tavily",
     baseUrl: "https://api.tavily.com",
-    defaultModel: "search",
+    defaultModel: "",
     enabled: Boolean(process.env.TAVILY_API_KEY)
   },
   {
     id: "serper",
     name: "Serper",
     baseUrl: "https://google.serper.dev",
-    defaultModel: "search",
+    defaultModel: "",
     enabled: Boolean(process.env.SERPER_API_KEY)
   }
 ];
@@ -350,6 +350,7 @@ function serializeAiProvider(provider: AiProviderSettings) {
     id: provider.id,
     name: provider.name,
     baseUrl: provider.baseUrl,
+    defaultModel: provider.defaultModel,
     enabled: provider.enabled,
     budget: provider.budget,
     models: provider.models,
@@ -403,6 +404,8 @@ function normalizeStoredAiProviders(value: unknown): StoredAiProviderSettings[] 
 
     const apiKey = typeof source.apiKey === "string" && source.apiKey.trim() ? source.apiKey.trim() : undefined;
     const baseUrl = typeof source.baseUrl === "string" && source.baseUrl.trim() ? source.baseUrl.trim() : undefined;
+    const defaultModel =
+      typeof source.defaultModel === "string" && source.defaultModel.trim() ? source.defaultModel.trim() : undefined;
     const enabled = typeof source.enabled === "boolean" ? source.enabled : undefined;
     const budget = typeof source.budget === "string" && source.budget.trim() ? source.budget.trim() : undefined;
     const models = Array.isArray(source.models)
@@ -413,6 +416,7 @@ function normalizeStoredAiProviders(value: unknown): StoredAiProviderSettings[] 
       id,
       apiKey,
       baseUrl,
+      defaultModel,
       enabled,
       budget,
       models
@@ -433,13 +437,15 @@ function buildRuntimeAiProviders(overrides: StoredAiProviderSettings[]): AiProvi
       override?.models && override.models.length > 0
         ? override.models
         : [];
+    const desiredDefaultModel = override?.defaultModel?.trim() ?? "";
+    const defaultModel = desiredDefaultModel && models.includes(desiredDefaultModel) ? desiredDefaultModel : "";
 
     return {
       ...provider,
       apiKey,
       apiKeySource,
       baseUrl: override?.baseUrl?.trim() || provider.baseUrl,
-      defaultModel: "",
+      defaultModel,
       enabled: typeof override?.enabled === "boolean" ? override.enabled : provider.enabled || Boolean(apiKey),
       budget: override?.budget?.trim() || "100 USD",
       models
@@ -492,7 +498,11 @@ function resolveChatModel(provider: AiProviderSettings, requestedModel?: string)
     return trimmedModel;
   }
 
-  return provider.models[0] ?? "";
+  if (provider.defaultModel && provider.models.includes(provider.defaultModel)) {
+    return provider.defaultModel;
+  }
+
+  return "";
 }
 
 export async function getChatProviderConfig(providerId?: string, requestedModel?: string): Promise<ChatProviderConfig | null> {
@@ -557,7 +567,11 @@ function getResolvedModelForProvider(providerId: string, fallbackModel: string) 
     return fallbackModel;
   }
 
-  return provider.models[0] ?? fallbackModel;
+  if (provider.defaultModel && provider.models.includes(provider.defaultModel)) {
+    return provider.defaultModel;
+  }
+
+  return fallbackModel;
 }
 
 function requireReadyAiProvider(providerId: string) {
@@ -579,12 +593,12 @@ function requireReadyAiProvider(providerId: string) {
 function resolveAgentModel(provider: AiProviderSettings, requestedModel: string | undefined) {
   const trimmedModel = requestedModel?.trim();
   if (!trimmedModel) {
-    if (provider.models[0]) {
-      return provider.models[0];
+    if (provider.defaultModel && provider.models.includes(provider.defaultModel)) {
+      return provider.defaultModel;
     }
     throw new SettingsRouteError(
       400,
-      `Recupere d'abord les modeles pour le fournisseur ${provider.name} avant de sauvegarder cet agent.`,
+      `Choisis d'abord un modele par defaut pour le fournisseur ${provider.name} dans Parametres API.`,
     );
   }
 
@@ -1468,14 +1482,23 @@ settingsRouter.put("/ai-providers", async (req, res, next) => {
 
       const nextApiKey = typeof next?.apiKey === "string" ? next.apiKey.trim() : "";
       const persistedApiKey = next?.clearApiKey ? undefined : nextApiKey || currentOverride?.apiKey;
+      const nextModels = Array.isArray(next?.models) ? next.models.map(String).filter(Boolean) : currentRuntime.models;
+      const requestedDefaultModel =
+        typeof next?.defaultModel === "string" && next.defaultModel.trim()
+          ? next.defaultModel.trim()
+          : "";
+      const persistedDefaultModel = requestedDefaultModel && nextModels.includes(requestedDefaultModel)
+        ? requestedDefaultModel
+        : "";
 
       return {
         id: provider.id,
         ...(persistedApiKey ? { apiKey: persistedApiKey } : {}),
         baseUrl: String(next?.baseUrl ?? currentRuntime.baseUrl),
+        defaultModel: persistedDefaultModel,
         enabled: next ? Boolean(next.enabled) : currentRuntime.enabled,
         budget: String(next?.budget ?? currentRuntime.budget),
-        models: Array.isArray(next?.models) ? next.models.map(String).filter(Boolean) : currentRuntime.models
+        models: nextModels
       };
     });
 
@@ -1522,6 +1545,10 @@ settingsRouter.post("/ai-providers/:provider/models", async (req, res) => {
         ...(typedApiKey ? { apiKey: typedApiKey } : existingOverride?.apiKey ? { apiKey: existingOverride.apiKey } : {}),
         baseUrl,
         models: finalModels,
+        defaultModel:
+          configured.defaultModel && finalModels.includes(configured.defaultModel)
+            ? configured.defaultModel
+            : "",
         enabled: configured.enabled,
         budget: configured.budget
       });
