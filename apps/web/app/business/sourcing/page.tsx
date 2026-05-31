@@ -7,7 +7,6 @@ import {
   BarChart2,
   Check,
   CheckCircle2,
-  ChevronDown,
   CreditCard,
   Edit2,
   Loader2,
@@ -87,7 +86,6 @@ type ApiProviderConfig = {
   id: string;
   name: string;
   baseUrl: string;
-  defaultModel: string;
   enabled: boolean;
   budget: string;
   models: string[];
@@ -133,7 +131,6 @@ function toProviderPayload(provider: ApiProviderConfig) {
   return {
     id: provider.id,
     baseUrl: provider.baseUrl,
-    defaultModel: provider.defaultModel,
     enabled: provider.enabled,
     budget: provider.budget,
     models: provider.models,
@@ -838,9 +835,6 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
       const models = data.models ?? [];
       updateProvider(provider.id, {
         models,
-        defaultModel: models.length > 0
-          ? (models.includes(provider.defaultModel) ? provider.defaultModel : models[0]!)
-          : provider.defaultModel,
         apiKey: "",
         apiKeyConfigured: provider.apiKeyConfigured || Boolean(typedApiKey),
         apiKeySource: typedApiKey ? "database" : provider.apiKeySource,
@@ -905,7 +899,6 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
         body: JSON.stringify({
           ...(typedApiKey ? { apiKey: typedApiKey } : {}),
           baseUrl: provider.baseUrl,
-          model: provider.defaultModel,
           message: draft
         })
       });
@@ -1117,29 +1110,6 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
                   </button>
                 </div>
               </div>
-
-              {!isSearch && provider.models?.length > 0 && (
-                <div className="mt-4">
-                  <label className="grid gap-2 text-sm">
-                    <span className="text-zinc-300">Modele par defaut</span>
-                    <div className="relative max-w-md">
-                      <select
-                        value={provider.defaultModel}
-                        onChange={(event) => updateProvider(provider.id, { defaultModel: event.target.value })}
-                        className="h-11 w-full appearance-none rounded-xl border border-line bg-ink px-3 pr-9 text-sm text-zinc-100 outline-none focus:border-gold/60"
-                      >
-                        {provider.models.map((model) => (
-                          <option key={model} value={model}>{model}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-                    </div>
-                  </label>
-                  <p className="mt-1.5 text-xs text-zinc-600">
-                    Ce modele sera utilise par tous les agents sourcing configures sur ce fournisseur.
-                  </p>
-                </div>
-              )}
 
               <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
                 <span>Source cle: {provider.apiKeySource}</span>
@@ -1434,18 +1404,6 @@ function GlobalAgentsTab({ apiSettingsVersion }: { apiSettingsVersion: number })
                         ))}
                       </select>
                       <p className="mt-1 text-xs text-zinc-600">Choisi d'abord le fournisseur branche a ta cle API.</p>
-                      {(() => {
-                        const prov = chatProviders.find((p) => p.id === selectedProviderId);
-                        const model = prov?.defaultModel;
-                        if (!model || model === "search") return null;
-                        return (
-                          <p className="mt-2 text-xs text-zinc-500">
-                            Modele actif:{" "}
-                            <span className="font-semibold text-gold">{model}</span>
-                            <span className="ml-1 text-zinc-600">(defini dans Parametres API)</span>
-                          </p>
-                        );
-                      })()}
                     </div>
                   </div>
                   {editorSection === "mission" ? (
@@ -1596,19 +1554,6 @@ function GlobalAgentsTab({ apiSettingsVersion }: { apiSettingsVersion: number })
                       {chatProviders.find((provider) => provider.id === agent.modelProvider)?.name ?? agent.modelProvider}
                     </span>
                   </p>
-                  {(() => {
-                    const prov = chatProviders.find((p) => p.id === agent.modelProvider);
-                    const model = prov?.defaultModel;
-                    if (!model || model === "search") return null;
-                    return (
-                      <p>
-                        <span className="text-zinc-400">Modele:</span>{" "}
-                        <span className="rounded-full bg-white/5 px-2 py-0.5 text-xs font-semibold text-zinc-200">
-                          {model}
-                        </span>
-                      </p>
-                    );
-                  })()}
                   <p><span className="text-zinc-400">Source interne:</span> {isSerper ? "Serper" : "Tavily"}</p>
                   {agent.defaultKeywords && <p><span className="text-zinc-400">Mots-cles:</span> {agent.defaultKeywords}</p>}
                   {agent.defaultSector && <p><span className="text-zinc-400">Secteur:</span> {agent.defaultSector}</p>}

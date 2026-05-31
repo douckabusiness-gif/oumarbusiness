@@ -220,63 +220,63 @@ const aiProviders = [
     id: "groq",
     name: "Groq",
     baseUrl: "https://api.groq.com/openai/v1",
-    defaultModel: "llama-3.3-70b-versatile",
+    defaultModel: "",
     enabled: false
   },
   {
     id: "openai",
     name: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
-    defaultModel: "gpt-4.1",
+    defaultModel: "",
     enabled: false
   },
   {
     id: "claude",
     name: "Claude",
     baseUrl: "https://api.anthropic.com",
-    defaultModel: process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-20250514",
+    defaultModel: "",
     enabled: Boolean(process.env.ANTHROPIC_API_KEY)
   },
   {
     id: "gemini",
     name: "Gemini",
     baseUrl: "https://generativelanguage.googleapis.com",
-    defaultModel: "gemini-2.5-pro",
+    defaultModel: "",
     enabled: false
   },
   {
     id: "glm",
     name: "GLM",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    defaultModel: "glm-4.5",
+    defaultModel: "",
     enabled: false
   },
   {
     id: "kimi-k2",
     name: "Kimi K2",
     baseUrl: "https://api.moonshot.ai/v1",
-    defaultModel: "kimi-k2",
+    defaultModel: "",
     enabled: false
   },
   {
     id: "qwen",
     name: "Qwen",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    defaultModel: "qwen-plus",
+    defaultModel: "",
     enabled: false
   },
   {
     id: "nvidia-nim",
     name: "NVIDIA NIM",
     baseUrl: "https://integrate.api.nvidia.com/v1",
-    defaultModel: "nvidia/llama-3.1-nemotron",
+    defaultModel: "",
     enabled: false
   },
   {
     id: "fal-ai",
     name: "fal.ai",
     baseUrl: "https://queue.fal.run",
-    defaultModel: "fal-ai/flux-pro",
+    defaultModel: "",
     enabled: Boolean(process.env.FAL_KEY)
   },
   {
@@ -350,7 +350,6 @@ function serializeAiProvider(provider: AiProviderSettings) {
     id: provider.id,
     name: provider.name,
     baseUrl: provider.baseUrl,
-    defaultModel: provider.defaultModel,
     enabled: provider.enabled,
     budget: provider.budget,
     models: provider.models,
@@ -404,8 +403,6 @@ function normalizeStoredAiProviders(value: unknown): StoredAiProviderSettings[] 
 
     const apiKey = typeof source.apiKey === "string" && source.apiKey.trim() ? source.apiKey.trim() : undefined;
     const baseUrl = typeof source.baseUrl === "string" && source.baseUrl.trim() ? source.baseUrl.trim() : undefined;
-    const defaultModel =
-      typeof source.defaultModel === "string" && source.defaultModel.trim() ? source.defaultModel.trim() : undefined;
     const enabled = typeof source.enabled === "boolean" ? source.enabled : undefined;
     const budget = typeof source.budget === "string" && source.budget.trim() ? source.budget.trim() : undefined;
     const models = Array.isArray(source.models)
@@ -416,7 +413,6 @@ function normalizeStoredAiProviders(value: unknown): StoredAiProviderSettings[] 
       id,
       apiKey,
       baseUrl,
-      defaultModel,
       enabled,
       budget,
       models
@@ -437,15 +433,13 @@ function buildRuntimeAiProviders(overrides: StoredAiProviderSettings[]): AiProvi
       override?.models && override.models.length > 0
         ? override.models
         : [];
-    const desiredDefaultModel = override?.defaultModel?.trim() || provider.defaultModel;
-    const defaultModel = models.includes(desiredDefaultModel) ? desiredDefaultModel : (models[0] ?? desiredDefaultModel);
 
     return {
       ...provider,
       apiKey,
       apiKeySource,
       baseUrl: override?.baseUrl?.trim() || provider.baseUrl,
-      defaultModel,
+      defaultModel: "",
       enabled: typeof override?.enabled === "boolean" ? override.enabled : provider.enabled || Boolean(apiKey),
       budget: override?.budget?.trim() || "100 USD",
       models
@@ -498,7 +492,7 @@ function resolveChatModel(provider: AiProviderSettings, requestedModel?: string)
     return trimmedModel;
   }
 
-  return provider.defaultModel;
+  return provider.models[0] ?? "";
 }
 
 export async function getChatProviderConfig(providerId?: string, requestedModel?: string): Promise<ChatProviderConfig | null> {
@@ -563,7 +557,7 @@ function getResolvedModelForProvider(providerId: string, fallbackModel: string) 
     return fallbackModel;
   }
 
-  return provider.defaultModel;
+  return provider.models[0] ?? fallbackModel;
 }
 
 function requireReadyAiProvider(providerId: string) {
@@ -585,7 +579,13 @@ function requireReadyAiProvider(providerId: string) {
 function resolveAgentModel(provider: AiProviderSettings, requestedModel: string | undefined) {
   const trimmedModel = requestedModel?.trim();
   if (!trimmedModel) {
-    return provider.defaultModel;
+    if (provider.models[0]) {
+      return provider.models[0];
+    }
+    throw new SettingsRouteError(
+      400,
+      `Recupere d'abord les modeles pour le fournisseur ${provider.name} avant de sauvegarder cet agent.`,
+    );
   }
 
   if (!provider.models.includes(trimmedModel)) {
@@ -1473,7 +1473,6 @@ settingsRouter.put("/ai-providers", async (req, res, next) => {
         id: provider.id,
         ...(persistedApiKey ? { apiKey: persistedApiKey } : {}),
         baseUrl: String(next?.baseUrl ?? currentRuntime.baseUrl),
-        defaultModel: String(next?.defaultModel ?? currentRuntime.defaultModel),
         enabled: next ? Boolean(next.enabled) : currentRuntime.enabled,
         budget: String(next?.budget ?? currentRuntime.budget),
         models: Array.isArray(next?.models) ? next.models.map(String).filter(Boolean) : currentRuntime.models
@@ -1523,9 +1522,6 @@ settingsRouter.post("/ai-providers/:provider/models", async (req, res) => {
         ...(typedApiKey ? { apiKey: typedApiKey } : existingOverride?.apiKey ? { apiKey: existingOverride.apiKey } : {}),
         baseUrl,
         models: finalModels,
-        defaultModel: finalModels.length > 0
-          ? (finalModels.includes(configured.defaultModel) ? configured.defaultModel : finalModels[0]!)
-          : configured.defaultModel,
         enabled: configured.enabled,
         budget: configured.budget
       });
@@ -1561,8 +1557,7 @@ settingsRouter.post("/ai-providers/:provider/test-chat", async (req, res) => {
   const baseUrl = String(req.body.baseUrl ?? configured.baseUrl);
   const requestedModel = typeof req.body.model === "string" && req.body.model.trim()
     ? req.body.model.trim()
-    : configured.defaultModel;
-  const model = configured.models.includes(requestedModel) ? requestedModel : configured.defaultModel;
+    : "";
   const requestedMessage = typeof req.body.message === "string" ? req.body.message.trim() : "";
   const testMessage = requestedMessage || "Test de connexion chat. Reponds: test ok";
   const systemPrompt = requestedMessage
@@ -1573,6 +1568,14 @@ settingsRouter.post("/ai-providers/:provider/test-chat", async (req, res) => {
     return res.status(400).json({
       ok: false,
       error: "Ajoute d'abord la cle API pour tester le chat."
+    });
+  }
+
+  const model = resolveChatModel(configured, requestedModel);
+  if (!model) {
+    return res.status(400).json({
+      ok: false,
+      error: "Recupere d'abord les modeles depuis ta cle API avant de tester le chat."
     });
   }
 
