@@ -1088,7 +1088,16 @@ function normalizeSourcingUserText(value: string | null | undefined) {
     .replace(/Agent Serper/gi, "Agent Découverte")
     .replace(/Agent Tavily/gi, "Agent Qualification")
     .replace(/\bSerper\b/gi, "Agent Découverte")
-    .replace(/\bTavily\b/gi, "Agent Qualification");
+    .replace(/\bTavily\b/gi, "Agent Qualification")
+    .replace(/!\[[^\]]*\]\((?:data:image\/[^)]+|[^)]+)\)/gi, " ")
+    .replace(/\[[^\]]+\]\((https?:\/\/[^)]+)\)/gi, "$1")
+    .replace(/<img[^>]*>/gi, " ")
+    .replace(/(?:^|\s)(?:\/?uploads?\/|public\/assets\/|assets\/|images?\/|img\/)[^\s]+/gi, " ")
+    .replace(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi, " ")
+    .replace(/#+\s*/g, " ")
+    .replace(/\|{2,}/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 function addDays(source: string | Date, days: number) {
@@ -2195,11 +2204,14 @@ function extractProspectName(title: string, url: string) {
 }
 
 const sourcingExcludedHostPattern =
-  /(^|\.)((jobs?|careers?|emploi|recrutement|vacancy|internship|stage|talent|work)(\.|$)|indeed\.|linkedin\.com|glassdoor\.|monster\.|careerjet\.|optioncarriere\.|welcometothejungle\.|jobnetafrica\.|michaelpage\.|businessfrance\.|jobs2\.|europages\.|kompass\.|franchise\.|business\.google\.com|google\.com|gouv\.fr|service-public\.fr)/i;
+  /(^|\.)((jobs?|careers?|emploi|recrutement|vacancy|internship|stage|talent|work)(\.|$)|indeed\.|linkedin\.com|glassdoor\.|monster\.|careerjet\.|optioncarriere\.|welcometothejungle\.|jobnetafrica\.|michaelpage\.|businessfrance\.|jobs2\.|europages\.|kompass\.|franchise\.|business\.google\.com|google\.com|gouv\.fr|service-public\.fr|facebook\.com|instagram\.com|x\.com|twitter\.com|tiktok\.com|youtube\.com)/i;
 const sourcingExcludedPathPattern =
-  /jobs?|job-|careers?|emploi|offres?-d-emploi|recrut|vacan|hiring|internship|stage|postuler|apply|annuaire|directory|marketplace|market-place|profil-d-entreprise|google-business-profile|actualites?|actus?|blog|guide|category|categorie|article|news|ressources?|salons?|congres|thematique/i;
+  /jobs?|job-|careers?|emploi|offres?-d-emploi|recrut|vacan|hiring|internship|stage|postuler|apply|annuaire|directory|marketplace|market-place|profil-d-entreprise|google-business-profile|actualites?|actus?|blog|guide|category|categorie|article|news|ressources?|salons?|congres|thematique|mentions-legales|mentions_legales|legal-notice|legal_notice|privacy|confidentialite|cookies?|rgpd|gdpr|terms|conditions|politique|uploads?|assets?|images?|logo/i;
 const sourcingExcludedTextPattern =
-  /jobs?|career|careers|emploi|offre d'emploi|recrut|vacan|hiring|internship|stage|postuler|apply now|candidature|annuaire|directory|marketplace|place de marche|franchise|actualite|blog|guide|article|magazine|congres|salon|news|theme|thematique/i;
+  /jobs?|career|careers|emploi|offre d'emploi|recrut|vacan|hiring|internship|stage|postuler|apply now|candidature|annuaire|directory|marketplace|place de marche|franchise|actualite|blog|guide|article|magazine|congres|salon|news|theme|thematique|mentions legales|legal notice|privacy policy|politique de confidentialite|cookies?|rgpd|gdpr|conditions generales|terms of use|all rights reserved/i;
+const sourcingAssetPathPattern = /\.(png|jpg|jpeg|webp|svg|gif|ico|pdf)(\?|$)/i;
+const sourcingAssetNoisePattern =
+  /data:image\/|!\[[^\]]*\]\(|\[[^\]]+\]\((?:data:image|\/uploads\/|\/assets\/)|\/uploads\/|\/assets\/|logo\.(png|jpg|jpeg|svg|webp|gif)|banner\.(png|jpg|jpeg|svg|webp|gif)/i;
 const sourcingBusinessPathPattern =
   /contact|about|apropos|a-propos|services|solutions|company|entreprise|societe|products|produits|catalogue/i;
 const sourcingBusinessTextPattern =
@@ -2272,10 +2284,12 @@ function isRejectedSourcingCandidate({
 
     if (sourcingExcludedHostPattern.test(hostname)) return true;
     if (sourcingExcludedPathPattern.test(pathname)) return true;
+    if (sourcingAssetPathPattern.test(parsed.pathname)) return true;
   } catch {
     return true;
   }
 
+  if (sourcingAssetNoisePattern.test(`${url} ${title} ${snippet} ${summary}`)) return true;
   return sourcingExcludedTextPattern.test(text);
 }
 
@@ -2350,6 +2364,7 @@ function looksLikeCompanyOfferPage(
   const sectorKeywords = extractSectorKeywords(sector, brief);
 
   if (sourcingExcludedTextPattern.test(text)) return false;
+  if (sourcingAssetNoisePattern.test(`${url} ${title} ${snippet} ${summary}`)) return false;
   if (audienceTargetingPattern.test(text)) {
     const targetsSector = sectorKeywords.some((keyword) => text.includes(`pour ${keyword}`) || text.includes(`des ${keyword}`));
     if (targetsSector) return false;
@@ -2367,6 +2382,52 @@ function looksLikeCompanyOfferPage(
   }
 
   return true;
+}
+
+function hasEnoughReadableBusinessContent(summary: string) {
+  const cleaned = normalizeSourcingUserText(summary);
+  if (cleaned.length < 80) return false;
+  const tokens = cleaned
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 3);
+  if (tokens.length < 12) return false;
+  const uniqueRatio = new Set(tokens.map((item) => item.toLowerCase())).size / Math.max(tokens.length, 1);
+  return uniqueRatio >= 0.45;
+}
+
+function isBareLegalOrUtilityPage({
+  title,
+  url,
+  snippet,
+  summary
+}: {
+  title: string;
+  url: string;
+  snippet: string;
+  summary: string;
+}) {
+  const text = normalizeSearchText(`${title} ${snippet} ${summary}`);
+  const legalSignal =
+    /mentions legales|legal notice|privacy|confidentialite|cookies?|rgpd|gdpr|conditions generales|terms/i.test(text);
+  const contactOnlySignal =
+    sourcingContactTextPattern.test(text) && !/(services|solutions|clients|expertise|cabinet|agence|entreprise|societe|about|a propos|notre equipe|nos services)/i.test(text);
+
+  try {
+    const parsed = new URL(url);
+    const path = normalizeSearchText(parsed.pathname);
+    const utilityPath = /(mentions-legales|legal|privacy|confidentialite|cookies?|rgpd|gdpr|contact|nous-contacter|contact-us)/i.test(path);
+    return utilityPath && (legalSignal || contactOnlySignal || !hasEnoughReadableBusinessContent(summary));
+  } catch {
+    return legalSignal || contactOnlySignal;
+  }
+}
+
+function sanitizeSourcingContent(value: string) {
+  return normalizeSourcingUserText(value)
+    .replace(/\b(accueil|home page|menu|copyright|edition|hebergeur)\b/gi, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 function dedupeSourcingProspects(prospects: NonNullable<SaasSourcingRun["prospects"][number]>[]) {
@@ -5427,17 +5488,22 @@ async function executeUserSourcingRun(
         return null;
       }
 
-      const summary = (await extractPageContent(result.url)) ?? result.snippet;
-      const combinedText = `${result.title} ${result.snippet} ${summary}`;
-      if (isRejectedSourcingCandidate({ title: result.title, url: result.url, snippet: result.snippet, summary })) return null;
-      if (!matchesSectorIntent({ title: result.title, url: result.url, snippet: result.snippet, summary }, sector, brief)) return null;
-      if (!looksLikeCompanyOfferPage({ title: result.title, url: result.url, snippet: result.snippet, summary }, sector, brief)) return null;
-      if (!hasStrongBusinessSignals({ title: result.title, url: result.url, snippet: result.snippet, summary })) return null;
-      const email = extractPreferredEmail(`${result.snippet}\n${summary}`, result.url);
-      const phone = extractFirstPhone(`${result.snippet}\n${summary}`);
+      const rawSummary = (await extractPageContent(result.url)) ?? result.snippet;
+      const summary = sanitizeSourcingContent(rawSummary);
+      const cleanedSnippet = sanitizeSourcingContent(result.snippet);
+      const combinedText = `${result.title} ${cleanedSnippet} ${summary}`;
+      if (!summary) return null;
+      if (isRejectedSourcingCandidate({ title: result.title, url: result.url, snippet: cleanedSnippet, summary })) return null;
+      if (isBareLegalOrUtilityPage({ title: result.title, url: result.url, snippet: cleanedSnippet, summary })) return null;
+      if (!matchesSectorIntent({ title: result.title, url: result.url, snippet: cleanedSnippet, summary }, sector, brief)) return null;
+      if (!looksLikeCompanyOfferPage({ title: result.title, url: result.url, snippet: cleanedSnippet, summary }, sector, brief)) return null;
+      if (!hasStrongBusinessSignals({ title: result.title, url: result.url, snippet: cleanedSnippet, summary })) return null;
+      if (!hasEnoughReadableBusinessContent(summary)) return null;
+      const email = extractPreferredEmail(`${cleanedSnippet}\n${summary}`, result.url);
+      const phone = extractFirstPhone(`${cleanedSnippet}\n${summary}`);
       const contactStrong = hasStrongContactSignals({
         url: result.url,
-        snippet: result.snippet,
+        snippet: cleanedSnippet,
         summary,
         email,
         phone
@@ -5448,7 +5514,7 @@ async function executeUserSourcingRun(
           buildMissionKeywordBoost(combinedText, sourcingAgent.missionConfig) +
           buildContactSignalBoost({
             url: result.url,
-            snippet: result.snippet,
+            snippet: cleanedSnippet,
             summary,
             email,
             phone
@@ -5467,7 +5533,7 @@ async function executeUserSourcingRun(
         website: result.url,
         ...(email ? { email } : {}),
         ...(phone ? { phone } : {}),
-        snippet: result.snippet,
+        snippet: cleanedSnippet,
         summary: summary.slice(0, 4000),
         source: result.source,
         score
