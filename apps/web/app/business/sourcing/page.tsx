@@ -103,6 +103,10 @@ type ApiProviderConfig = {
   chatMessage?: string;
   chatDraft?: string;
   chatReply?: string;
+  searchStatus?: "idle" | "loading" | "ok" | "error";
+  searchMessage?: string;
+  searchDraft?: string;
+  searchResults?: Array<{ title: string; url: string; snippet: string }>;
 };
 
 type ApiSettingsTabKey = "providers" | "search";
@@ -123,7 +127,11 @@ function normalizeProvider(provider: ApiProviderConfig): ApiProviderConfig {
     chatStatus: "idle",
     chatMessage: undefined,
     chatDraft: "",
-    chatReply: ""
+    chatReply: "",
+    searchStatus: "idle",
+    searchMessage: undefined,
+    searchDraft: "",
+    searchResults: []
   };
 }
 
@@ -929,6 +937,64 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
     }
   }
 
+  async function testSearch(provider: ApiProviderConfig) {
+    const draft = provider.searchDraft?.trim() ?? "";
+    if (!draft) {
+      updateProvider(provider.id, {
+        searchStatus: "error",
+        searchMessage: "Ecris une requete de test avant de lancer la recherche."
+      });
+      return;
+    }
+
+    updateProvider(provider.id, {
+      searchStatus: "loading",
+      searchMessage: "Test de recherche en cours...",
+      searchResults: []
+    });
+
+    try {
+      const typedApiKey = provider.apiKey?.trim();
+      const response = await fetch(`${apiBaseUrl}/api/settings/ai-providers/${provider.id}/test-search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          ...(typedApiKey ? { apiKey: typedApiKey } : {}),
+          baseUrl: provider.baseUrl,
+          query: draft
+        })
+      });
+      const data = (await response.json()) as {
+        ok?: boolean;
+        message?: string;
+        error?: string;
+        results?: Array<{ title?: string; url?: string; snippet?: string }>;
+      };
+      if (!response.ok || !data.ok) throw new Error(data.error ?? "Recherche de test indisponible");
+      updateProvider(provider.id, {
+        apiKey: "",
+        apiKeyConfigured: provider.apiKeyConfigured || Boolean(typedApiKey),
+        apiKeySource: typedApiKey ? "database" : provider.apiKeySource,
+        clearApiKey: false,
+        isReplacingKey: false,
+        searchStatus: "ok",
+        searchMessage: data.message ?? "Recherche de test reussie",
+        searchResults: (data.results ?? []).map((item) => ({
+          title: String(item.title ?? "Resultat"),
+          url: String(item.url ?? ""),
+          snippet: String(item.snippet ?? "")
+        }))
+      });
+    } catch (caught) {
+      updateProvider(provider.id, {
+        searchStatus: "error",
+        searchMessage: caught instanceof Error ? caught.message : "Recherche de test indisponible",
+        searchResults: []
+      });
+    }
+  }
+
   const providerItems = providers.filter(isChatProvider);
   const searchItems = providers.filter(isSearchProvider);
 
@@ -1126,6 +1192,19 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
                     {provider.models.length} modele(s) disponible(s)
                   </span>
                 ) : null}
+                {isSearch && provider.searchMessage ? (
+                  <span
+                    className={`rounded-full border px-2 py-1 ${
+                      provider.searchStatus === "error"
+                        ? "border-rose-500/30 text-rose-300"
+                        : provider.searchStatus === "ok"
+                          ? "border-emerald-500/30 text-emerald-300"
+                          : "border-line text-zinc-400"
+                    }`}
+                  >
+                    {provider.searchMessage}
+                  </span>
+                ) : null}
                 {provider.chatMessage ? (
                   <span
                     className={`rounded-full border px-2 py-1 ${
@@ -1203,6 +1282,73 @@ function ApiSettingsTab({ onSaved }: { onSaved: () => void }) {
                           <p className="whitespace-pre-wrap">{provider.chatReply}</p>
                         ) : (
                           <p className="text-zinc-600">Aucune reponse pour le moment. Lance un test pour voir le retour du modele.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {isSearch && (
+                <div className="mt-5 rounded-2xl border border-line bg-ink/60 p-4">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-zinc-100">Test de recherche direct</p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        Lance une vraie requete pour verifier que la cle {provider.name} et l&apos;endpoint repondent correctement.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void testSearch(provider)}
+                      disabled={provider.searchStatus === "loading"}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-gold px-4 text-sm font-semibold text-black disabled:opacity-60"
+                    >
+                      {provider.searchStatus === "loading" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                      Tester la recherche
+                    </button>
+                  </div>
+
+                  <div className="mt-4 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+                    <label className="grid gap-2 text-sm">
+                      <span className="text-zinc-300">Requete de test</span>
+                      <textarea
+                        rows={5}
+                        value={provider.searchDraft ?? ""}
+                        onChange={(event) => updateProvider(provider.id, { searchDraft: event.target.value })}
+                        placeholder={
+                          provider.id === "serper"
+                            ? "Ex: cabinets comptables Paris site officiel page contact"
+                            : "Ex: cabinets comptables Paris email contact site officiel"
+                        }
+                        className="w-full resize-none rounded-2xl border border-line bg-panel px-3 py-3 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-gold/60"
+                      />
+                    </label>
+
+                    <div className="grid gap-2 text-sm">
+                      <span className="text-zinc-300">Retour du fournisseur</span>
+                      <div className="min-h-[132px] rounded-2xl border border-line bg-panel px-3 py-3 text-sm text-zinc-200">
+                        {provider.searchResults?.length ? (
+                          <div className="space-y-3">
+                            {provider.searchResults.map((result, index) => (
+                              <article key={`${provider.id}-search-${index}`} className="rounded-xl border border-line bg-ink/70 p-3">
+                                <p className="font-semibold text-zinc-100">{result.title || "Resultat"}</p>
+                                {result.url ? (
+                                  <a
+                                    href={result.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="mt-1 block break-all text-xs text-gold hover:underline"
+                                  >
+                                    {result.url}
+                                  </a>
+                                ) : null}
+                                {result.snippet ? <p className="mt-2 text-xs leading-5 text-zinc-400">{result.snippet}</p> : null}
+                              </article>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-zinc-600">Aucun resultat affiche pour le moment. Lance un test pour verifier la vraie reponse de {provider.name}.</p>
                         )}
                       </div>
                     </div>

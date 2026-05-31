@@ -28,6 +28,12 @@ type SearchProviderRuntimeConfig = {
   source: "database" | "env" | "none";
 };
 
+type RuntimeConfigOverride = {
+  apiKey?: string;
+  baseUrl?: string;
+  enabled?: boolean;
+};
+
 export function getSearchIntelligenceConfig() {
   return {
     providers: {
@@ -125,14 +131,16 @@ export async function searchSerper({
   query,
   limit = 5,
   country = "Cote d'Ivoire",
-  language = "fr"
+  language = "fr",
+  runtimeOverride
 }: {
   query: string;
   limit?: number;
   country?: string;
   language?: string;
+  runtimeOverride?: RuntimeConfigOverride;
 }) {
-  const config = await getSearchProviderRuntimeConfig("serper");
+  const config = await getSearchProviderRuntimeConfig("serper", runtimeOverride);
   if (!config.enabled || !config.apiKey) {
     return {
       configured: false,
@@ -179,13 +187,15 @@ export async function searchSerper({
 export async function searchTavily({
   query,
   limit = 5,
-  language = "fr"
+  language = "fr",
+  runtimeOverride
 }: {
   query: string;
   limit?: number;
   language?: string;
+  runtimeOverride?: RuntimeConfigOverride;
 }) {
-  const config = await getSearchProviderRuntimeConfig("tavily");
+  const config = await getSearchProviderRuntimeConfig("tavily", runtimeOverride);
   if (!config.enabled || !config.apiKey) {
     return {
       configured: false,
@@ -265,6 +275,56 @@ export async function extractPageContent(url: string): Promise<string | null> {
   }
 }
 
+export async function testSearchProvider(input: {
+  provider: SearchProvider;
+  query: string;
+  apiKey?: string;
+  baseUrl?: string;
+  limit?: number;
+  country?: string;
+  language?: string;
+}) {
+  const query = input.query.trim();
+  const limit = Math.min(Math.max(Number(input.limit ?? 3), 1), 5);
+  if (!query) {
+    throw new Error("Ecris d'abord une requete de test.");
+  }
+
+  const runtimeOverride: RuntimeConfigOverride = {
+    ...(typeof input.apiKey === "string" && input.apiKey.trim() ? { apiKey: input.apiKey.trim(), enabled: true } : {}),
+    ...(typeof input.baseUrl === "string" && input.baseUrl.trim() ? { baseUrl: input.baseUrl.trim() } : {})
+  };
+
+  if (input.provider === "serper") {
+    const result = await searchSerper({
+      query,
+      limit,
+      country: input.country ?? "",
+      language: input.language ?? "fr",
+      runtimeOverride
+    });
+    return {
+      provider: "serper" as const,
+      configured: result.configured,
+      mode: result.mode,
+      results: result.results
+    };
+  }
+
+  const result = await searchTavily({
+    query,
+    limit,
+    language: input.language ?? "fr",
+    runtimeOverride
+  });
+  return {
+    provider: "tavily" as const,
+    configured: result.configured,
+    mode: result.mode,
+    results: result.results
+  };
+}
+
 function buildObjectiveQuery(input: Required<Pick<ObjectiveSearchInput, "objective" | "country" | "language">> & ObjectiveSearchInput) {
   const parts = [input.objective, input.audience, input.country].filter(Boolean);
   return parts.join(" ");
@@ -301,7 +361,10 @@ function dedupeResults(results: SearchResult[]) {
   });
 }
 
-async function getSearchProviderRuntimeConfig(providerId: SearchProvider): Promise<SearchProviderRuntimeConfig> {
+async function getSearchProviderRuntimeConfig(
+  providerId: SearchProvider,
+  override?: RuntimeConfigOverride
+): Promise<SearchProviderRuntimeConfig> {
   const envApiKey = providerId === "serper" ? process.env.SERPER_API_KEY ?? "" : process.env.TAVILY_API_KEY ?? "";
   const fallbackBaseUrl = providerId === "serper" ? serperBaseUrl : tavilyBaseUrl;
 
@@ -313,9 +376,16 @@ async function getSearchProviderRuntimeConfig(providerId: SearchProvider): Promi
   }) as { apiKey?: unknown; baseUrl?: unknown; enabled?: unknown } | undefined;
 
   const databaseApiKey = typeof provider?.apiKey === "string" ? provider.apiKey.trim() : "";
-  const apiKey = databaseApiKey || envApiKey;
-  const baseUrl = typeof provider?.baseUrl === "string" && provider.baseUrl.trim() ? provider.baseUrl.trim() : fallbackBaseUrl;
-  const enabled = typeof provider?.enabled === "boolean" ? provider.enabled : Boolean(apiKey);
+  const overrideApiKey = typeof override?.apiKey === "string" ? override.apiKey.trim() : "";
+  const apiKey = overrideApiKey || databaseApiKey || envApiKey;
+  const overrideBaseUrl = typeof override?.baseUrl === "string" ? override.baseUrl.trim() : "";
+  const baseUrl = overrideBaseUrl || (typeof provider?.baseUrl === "string" && provider.baseUrl.trim() ? provider.baseUrl.trim() : fallbackBaseUrl);
+  const enabled =
+    typeof override?.enabled === "boolean"
+      ? override.enabled
+      : typeof provider?.enabled === "boolean"
+        ? provider.enabled
+        : Boolean(apiKey);
 
   return {
     apiKey,

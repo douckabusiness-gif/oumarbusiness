@@ -10,6 +10,7 @@ import {
 } from "../../services/brandingLogo.js";
 import { decryptSecret, encryptSecret } from "../../services/encryption.js";
 import { callProviderChat, providerChatErrorMessage } from "../../services/providerChatClient.js";
+import { testSearchProvider } from "../../services/searchIntelligence.js";
 import { requireAuthenticatedAdmin } from "./admin-auth.js";
 
 export const settingsRouter = Router();
@@ -1635,6 +1636,69 @@ settingsRouter.post("/ai-providers/:provider/test-chat", async (req, res) => {
       provider: providerId,
       model,
       error: providerChatErrorMessage(providerId, error)
+    });
+  }
+});
+
+settingsRouter.post("/ai-providers/:provider/test-search", async (req, res) => {
+  await ensureAiProvidersLoaded();
+  const providerId = String(req.params.provider);
+  if (providerId !== "serper" && providerId !== "tavily") {
+    return res.status(400).json({
+      ok: false,
+      error: "Ce fournisseur n'est pas un moteur de recherche sourcing."
+    });
+  }
+
+  const configured = storedAiProviders.find((item) => item.id === providerId);
+  if (!configured) {
+    return res.status(404).json({
+      ok: false,
+      error: "Fournisseur inconnu"
+    });
+  }
+
+  const typedApiKey = typeof req.body.apiKey === "string" ? req.body.apiKey.trim() : "";
+  const apiKey = typedApiKey || configured.apiKey || "";
+  const baseUrl = String(req.body.baseUrl ?? configured.baseUrl);
+  const query = typeof req.body.query === "string" ? req.body.query.trim() : "";
+
+  if (!apiKey) {
+    return res.status(400).json({
+      ok: false,
+      error: `Ajoute d'abord la cle API ${configured.name} pour tester la recherche.`
+    });
+  }
+
+  if (!query) {
+    return res.status(400).json({
+      ok: false,
+      error: "Ecris d'abord une requete de test."
+    });
+  }
+
+  try {
+    const result = await testSearchProvider({
+      provider: providerId,
+      query,
+      apiKey,
+      baseUrl,
+      limit: 3,
+      language: "fr"
+    });
+
+    res.json({
+      ok: true,
+      provider: configured.name,
+      message: `${configured.name} repond correctement a la requete de test.`,
+      resultCount: result.results.length,
+      results: result.results
+    });
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      provider: configured.name,
+      error: error instanceof Error ? error.message : "Recherche de test indisponible."
     });
   }
 });
