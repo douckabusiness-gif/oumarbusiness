@@ -2193,13 +2193,21 @@ async function upsertCompanyLeadFromWhatsApp(companyId: string, phone: string, l
 }
 
 function extractProspectName(title: string, url: string) {
-  const cleanedTitle = title.split("|")[0]?.split("-")[0]?.trim();
-  if (cleanedTitle) return cleanedTitle.slice(0, 120);
+  const cleanedTitle = title
+    .split("|")[0]
+    ?.split("•")[0]
+    ?.split("–")[0]
+    ?.split("-")[0]
+    ?.trim();
+  const genericTitle =
+    !cleanedTitle ||
+    /^(contact|mentions legales?|legal notice|privacy|rgpd|gdpr|home|accueil|services?)$/i.test(cleanedTitle);
+  if (cleanedTitle && !genericTitle) return cleanedTitle.slice(0, 120);
   try {
     const parsed = new URL(url);
     return parsed.hostname.replace(/^www\./, "");
   } catch {
-    return title;
+    return cleanedTitle || title;
   }
 }
 
@@ -2430,6 +2438,19 @@ function sanitizeSourcingContent(value: string) {
     .trim();
 }
 
+const sourcingQualificationAuditPaths = [
+  "",
+  "/contact",
+  "/contact-us",
+  "/nous-contacter",
+  "/reach-us",
+  "/a-propos",
+  "/about",
+  "/about-us",
+  "/services",
+  "/nos-services"
+];
+
 function dedupeSourcingProspects(prospects: NonNullable<SaasSourcingRun["prospects"][number]>[]) {
   const seen = new Set<string>();
   return prospects.filter((prospect) => {
@@ -2637,6 +2658,88 @@ function buildProspectScore(text: string, summary: string, website: string) {
   }
 
   return Math.max(0, Math.min(score, 95));
+}
+
+function buildQualificationAuditCandidateUrls(url: string) {
+  try {
+    const parsed = new URL(url);
+    const root = `${parsed.protocol}//${parsed.hostname}`;
+    const current = `${root}${parsed.pathname}`;
+    const candidates = [
+      current,
+      ...sourcingQualificationAuditPaths.map((path) => `${root}${path}`)
+    ];
+    return Array.from(new Set(candidates));
+  } catch {
+    return [url];
+  }
+}
+
+async function inspectQualificationSitePages({
+  title,
+  url,
+  snippet,
+  summary
+}: {
+  title: string;
+  url: string;
+  snippet: string;
+  summary: string;
+}) {
+  const candidates = buildQualificationAuditCandidateUrls(url).slice(0, 6);
+  let best = {
+    url,
+    summary,
+    snippet,
+    email: extractPreferredEmail(`${snippet}\n${summary}`, url),
+    phone: extractFirstPhone(`${snippet}\n${summary}`),
+    score: -1
+  };
+
+  for (const candidateUrl of candidates) {
+    const rawContent = candidateUrl === url ? summary : await extractPageContent(candidateUrl);
+    const candidateSummary = sanitizeSourcingContent(rawContent ?? "");
+    if (!candidateSummary) continue;
+    if (isRejectedSourcingCandidate({ title, url: candidateUrl, snippet: "", summary: candidateSummary })) continue;
+    if (isBareLegalOrUtilityPage({ title, url: candidateUrl, snippet: "", summary: candidateSummary })) continue;
+
+    const email = extractPreferredEmail(candidateSummary, candidateUrl);
+    const phone = extractFirstPhone(candidateSummary);
+    const contactStrong = hasStrongContactSignals({
+      url: candidateUrl,
+      snippet: "",
+      summary: candidateSummary,
+      email,
+      phone
+    });
+    const readable = hasEnoughReadableBusinessContent(candidateSummary);
+    if (!contactStrong && !readable) continue;
+
+    const score =
+      buildProspectScore(`${title} ${candidateSummary}`, candidateSummary, candidateUrl) +
+      buildContactSignalBoost({
+        url: candidateUrl,
+        snippet: "",
+        summary: candidateSummary,
+        email,
+        phone
+      }) +
+      (contactStrong ? 12 : 0) +
+      (candidateUrl !== url ? 3 : 0);
+
+    if (score > best.score) {
+      best = {
+        url: candidateUrl,
+        summary: candidateSummary,
+        snippet: candidateUrl === url ? snippet : "",
+        email,
+        phone,
+        score
+      };
+    }
+  }
+
+  return best;
 }
 
 function buildMissionKeywordBoost(text: string, mission: SaasAgentProfile["missionConfig"]) {
@@ -5489,20 +5592,35 @@ async function executeUserSourcingRun(
       }
 
       const rawSummary = (await extractPageContent(result.url)) ?? result.snippet;
-      const summary = sanitizeSourcingContent(rawSummary);
       const cleanedSnippet = sanitizeSourcingContent(result.snippet);
+      let summary = sanitizeSourcingContent(rawSummary);
+      let website = result.url;
+      let email = extractPreferredEmail(`${cleanedSnippet}\n${summary}`, result.url);
+      let phone = extractFirstPhone(`${cleanedSnippet}\n${summary}`);
+
+      if (sourcingAgent.missionConfig.source === "tavily") {
+        const audited = await inspectQualificationSitePages({
+          title: result.title,
+          url: result.url,
+          snippet: cleanedSnippet,
+          summary
+        });
+        summary = audited.summary || summary;
+        website = audited.url || website;
+        email = audited.email ?? email;
+        phone = audited.phone ?? phone;
+      }
+
       const combinedText = `${result.title} ${cleanedSnippet} ${summary}`;
       if (!summary) return null;
-      if (isRejectedSourcingCandidate({ title: result.title, url: result.url, snippet: cleanedSnippet, summary })) return null;
-      if (isBareLegalOrUtilityPage({ title: result.title, url: result.url, snippet: cleanedSnippet, summary })) return null;
+      if (isRejectedSourcingCandidate({ title: result.title, url: website, snippet: cleanedSnippet, summary })) return null;
+      if (isBareLegalOrUtilityPage({ title: result.title, url: website, snippet: cleanedSnippet, summary })) return null;
       if (!matchesSectorIntent({ title: result.title, url: result.url, snippet: cleanedSnippet, summary }, sector, brief)) return null;
-      if (!looksLikeCompanyOfferPage({ title: result.title, url: result.url, snippet: cleanedSnippet, summary }, sector, brief)) return null;
-      if (!hasStrongBusinessSignals({ title: result.title, url: result.url, snippet: cleanedSnippet, summary })) return null;
+      if (!looksLikeCompanyOfferPage({ title: result.title, url: website, snippet: cleanedSnippet, summary }, sector, brief)) return null;
+      if (!hasStrongBusinessSignals({ title: result.title, url: website, snippet: cleanedSnippet, summary })) return null;
       if (!hasEnoughReadableBusinessContent(summary)) return null;
-      const email = extractPreferredEmail(`${cleanedSnippet}\n${summary}`, result.url);
-      const phone = extractFirstPhone(`${cleanedSnippet}\n${summary}`);
       const contactStrong = hasStrongContactSignals({
-        url: result.url,
+        url: website,
         snippet: cleanedSnippet,
         summary,
         email,
@@ -5510,10 +5628,10 @@ async function executeUserSourcingRun(
       });
       const score = Math.min(
         99,
-        buildProspectScore(combinedText, summary, result.url) +
+        buildProspectScore(combinedText, summary, website) +
           buildMissionKeywordBoost(combinedText, sourcingAgent.missionConfig) +
           buildContactSignalBoost({
-            url: result.url,
+            url: website,
             snippet: cleanedSnippet,
             summary,
             email,
@@ -5528,9 +5646,9 @@ async function executeUserSourcingRun(
 
       const prospect = {
         id: randomUUID(),
-        name: extractProspectName(result.title, result.url),
-        company: extractProspectName(result.title, result.url),
-        website: result.url,
+        name: extractProspectName(result.title, website),
+        company: extractProspectName(result.title, website),
+        website,
         ...(email ? { email } : {}),
         ...(phone ? { phone } : {}),
         snippet: cleanedSnippet,
